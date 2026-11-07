@@ -809,6 +809,12 @@ def test_editor_default_views(client):
     assert client.put("/api/settings", json={"notes_view": "edit"}).status_code == 422
 
 
+def test_back_behavior_setting(client):
+    assert client.get("/api/settings").json()["back_behavior"] == "up"
+    assert client.put("/api/settings", json={"back_behavior": "history"}).json()["back_behavior"] == "history"
+    assert client.put("/api/settings", json={"back_behavior": "sideways"}).status_code == 422
+
+
 def test_dashboard_summarizes_meetings(client):
     mid = meeting(client)
     empty = client.get("/api/dashboard").json()
@@ -982,6 +988,19 @@ def test_folders_organise_meetings(client):
     assert client.get("/api/folders").json() == []
     f = client.post("/api/folders", json={"name": "Lab"}).json()
     assert client.post("/api/meetings", json={"folder_id": f["id"]}).json()["folder_id"] == f["id"]
+
+
+def test_folder_color_and_icon(client):
+    f = client.post("/api/folders", json={"name": "Design", "color": "teal", "icon": "palette"}).json()
+    assert (f["color"], f["icon"]) == ("teal", "palette")
+    # Changing the look alone keeps the name; null resets to the default look.
+    f = client.patch(f"/api/folders/{f['id']}", json={"color": "pink"}).json()
+    assert (f["name"], f["color"], f["icon"]) == ("Design", "pink", "palette")
+    f = client.patch(f"/api/folders/{f['id']}", json={"color": None, "icon": None}).json()
+    assert f["color"] is None and f["icon"] is None
+    assert client.patch(f"/api/folders/{f['id']}", json={"color": "#ff0000"}).status_code == 422
+    assert client.patch(f"/api/folders/{f['id']}", json={"icon": "<svg>"}).status_code == 422
+    assert client.post("/api/folders", json={"name": "X", "color": 3}).status_code == 422
 
 
 def test_archived_meetings_rank_last_in_search(client):

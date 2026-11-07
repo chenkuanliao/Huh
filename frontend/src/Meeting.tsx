@@ -3,8 +3,9 @@ import Markdown, { SourceInfo } from './Markdown';
 import AudioPlayer, { clock, PlayerHandle } from './AudioPlayer';
 import FindBar from './FindBar';
 import { defaultTitle } from './format';
-import { Archive, Folder as FolderIcon, Maximize2, AudioLines, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
-import { api, Detail, errorText, Generation, Job, send, Template } from './api';
+import { Archive, Maximize2, AudioLines, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
+import { api, Detail, errorText, Folder, Generation, Job, send, Template } from './api';
+import { FolderGlyph, folderVars } from './folders';
 import Editor from './Editor';
 import { DeviceIcon } from './Recorder';
 import { Badge, Callout, cx, Menu, MenuItem, Select, Spinner, useToast } from './ui';
@@ -87,7 +88,8 @@ export default function MeetingView({
   views,
   request,
   organize = [],
-  folderName,
+  folder,
+  onOpenFolder,
   onUnarchive,
 }: {
   id: string;
@@ -98,7 +100,8 @@ export default function MeetingView({
   onManageTemplates: () => void;
   /** Move-to-folder and archive actions, owned by the sidebar. */
   organize?: MenuItem[];
-  folderName?: string;
+  folder?: Folder;
+  onOpenFolder?: (id: string) => void;
   onUnarchive?: () => void;
   views: { notes: 'write' | 'preview'; ai: 'write' | 'preview' };
   /** Open a tab, optionally searching and/or moving the transcript playhead (from global search). */
@@ -300,10 +303,10 @@ export default function MeetingView({
             {created.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
           </span>
           {status && <Badge tone={status.tone}>{status.label}</Badge>}
-          {folderName && (
-            <span className="meeting-folder">
-              <FolderIcon size={13} /> {folderName}
-            </span>
+          {folder && (
+            <button type="button" className="meeting-folder" style={folderVars(folder)} title={`Open ${folder.name}`} onClick={() => onOpenFolder?.(folder.id)}>
+              <FolderGlyph folder={folder} size={13} /> {folder.name}
+            </button>
           )}
           <span className="spacer" />
           <Menu

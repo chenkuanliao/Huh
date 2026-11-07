@@ -66,7 +66,7 @@ export default function Settings({
     { id: 'ai', label: 'AI notes', icon: <Sparkles size={17} />, hint: 'Provider & model' },
     { id: 'transcription', label: 'Transcription', icon: <AudioLines size={17} />, hint: 'Local speech model' },
     { id: 'templates', label: 'Templates', icon: <LayoutTemplate size={17} />, hint: 'Notes & AI formats' },
-    { id: 'notes', label: 'Notes', icon: <NotebookPen size={17} />, hint: 'Editor defaults & shortcuts' },
+    { id: 'notes', label: 'Notes & navigation', icon: <NotebookPen size={17} />, hint: 'Editor, Back button, shortcuts' },
   ];
 
   return (
@@ -942,6 +942,33 @@ function NotesSettings({ settings, save }: { settings: SettingsT; save: Save }) 
             <p className="hint">Generated notes, mostly read.</p>
           </div>
           <Segmented ariaLabel="AI notes open in" value={settings.ai_notes_view} onChange={v => void save({ ai_notes_view: v }).catch(() => {})} options={views} />
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <h2>Going back</h2>
+            <p className="muted">What the Back button does — and your browser’s back button, mouse back button and Alt+← too.</p>
+          </div>
+        </div>
+        <div className="setting-line">
+          <div>
+            <strong>Back goes to</strong>
+            <p className="hint">
+              {settings.back_behavior === 'history'
+                ? 'The page you were on before, in the order you visited them — even if you jumped around from the sidebar.'
+                : 'One level up: a meeting goes to its folder (or Home if it isn’t in one), a folder goes to Home.'}
+            </p>
+          </div>
+          <Segmented
+            ariaLabel="Back goes to"
+            value={settings.back_behavior}
+            onChange={v => void save({ back_behavior: v }).catch(() => {})}
+            options={[
+              { value: 'up' as const, label: 'Up one level' },
+              { value: 'history' as const, label: 'Previous page' },
+            ]}
+          />
         </div>
       </section>
       <section className="panel">

@@ -546,6 +546,24 @@ def folder_name(body):
     return name
 
 
+FOLDER_COLORS = {"slate", "red", "orange", "amber", "green", "teal", "blue", "indigo", "violet", "pink"}
+FOLDER_ICON = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+
+
+def folder_look(f, body):
+    """Applies optional color/icon from the body; null resets to the default look."""
+    if "color" in body:
+        c = body["color"]
+        if c is not None and c not in FOLDER_COLORS:
+            fail("Invalid color", 422)
+        f.color = c
+    if "icon" in body:
+        i = body["icon"]
+        if i is not None and not (isinstance(i, str) and FOLDER_ICON.match(i)):
+            fail("Invalid icon", 422)
+        f.icon = i
+
+
 @app.get("/api/folders")
 def list_folders():
     with tx() as s:
@@ -556,6 +574,7 @@ def list_folders():
 def create_folder(body: dict):
     with tx() as s:
         f = Folder(name=folder_name(body))
+        folder_look(f, body)
         s.add(f)
         s.flush()
         return public(f)
@@ -565,7 +584,10 @@ def create_folder(body: dict):
 def rename_folder(fid: str, body: dict):
     with tx() as s:
         f = require(s, Folder, fid)
-        f.name = folder_name(body)
+        if "name" in body:
+            f.name = folder_name(body)
+        folder_look(f, body)
+        s.flush()
         return public(f)
 
 
@@ -1041,6 +1063,8 @@ def write_settings(body: dict):
             "preview",
         ]:
             fail("Invalid editor view", 422)
+        if v["back_behavior"] not in ["up", "history"]:
+            fail("Invalid back behavior", 422)
         if v["base_url"] and (
             urlsplit(v["base_url"]).scheme not in ["http", "https"]
             or urlsplit(v["base_url"]).username
