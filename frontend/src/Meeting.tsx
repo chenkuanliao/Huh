@@ -3,7 +3,7 @@ import Markdown, { SourceInfo } from './Markdown';
 import AudioPlayer, { clock, PlayerHandle } from './AudioPlayer';
 import FindBar from './FindBar';
 import { defaultTitle } from './format';
-import { Archive, Columns2, ListTodo, Maximize2, NotebookPen, PanelRightClose, Rows3, AudioLines, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, LocateFixed, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, BookA, Columns2, ListTodo, Maximize2, NotebookPen, PanelRightClose, Rows3, AudioLines, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, LocateFixed, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 import { api, Detail, errorText, Folder, Generation, Job, send, Template } from './api';
 import { FolderGlyph, folderVars } from './folders';
 import Editor from './Editor';
@@ -131,6 +131,8 @@ export default function MeetingView({
   onOpenFolder,
   onUnarchive,
   defaultNoteLanguage = 'auto',
+  glossaryCount = 0,
+  onGlossary,
 }: {
   id: string;
   /** The "Language of AI notes" setting, used when the meeting has no choice of its own. */
@@ -145,6 +147,9 @@ export default function MeetingView({
   folder?: Folder;
   onOpenFolder?: (id: string) => void;
   onUnarchive?: () => void;
+  /** Glossary terms the AI will know for this meeting (all notes + folder + meeting). */
+  glossaryCount?: number;
+  onGlossary?: () => void;
   views: { notes: 'write' | 'preview'; ai: 'write' | 'preview' };
   /** Open a tab, optionally searching and/or moving the transcript playhead (from the palette or a to-do link). */
   request?: MeetingRequest | null;
@@ -479,6 +484,16 @@ export default function MeetingView({
               <FolderGlyph folder={folder} size={13} /> {folder.name}
             </button>
           )}
+          {onGlossary && (
+            <button
+              type="button"
+              className={cx('glossary-chip', glossaryCount > 0 && 'on')}
+              title={glossaryCount ? `The AI knows ${glossaryCount} glossary term${glossaryCount === 1 ? '' : 's'} for this meeting. Edit…` : 'Add names, terms or acronyms the AI should know'}
+              onClick={onGlossary}
+            >
+              <BookA size={13} /> Glossary{glossaryCount > 0 && <span className="glossary-count">{glossaryCount}</span>}
+            </button>
+          )}
           <span className="spacer" />
           {roomy && (
             <button
@@ -505,6 +520,7 @@ export default function MeetingView({
                 },
               },
               { label: 'Import audio file…', icon: <FileAudio size={15} />, onSelect: importAudio },
+              ...(onGlossary ? [{ label: 'Glossary…', hint: 'Terms the AI should know', icon: <BookA size={15} />, onSelect: onGlossary }] : []),
               { label: 'Export as Markdown', icon: <Download size={15} />, onSelect: () => window.open(`/api/meetings/${id}/export?format=md`, '_blank') },
               ...(organize.length ? (['divider', ...organize] as MenuItem[]) : []),
               'divider',

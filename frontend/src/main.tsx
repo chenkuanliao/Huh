@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Archive, ArchiveRestore, ArrowLeft, AudioLines, BookOpen, Check, ChevronRight, Download, FileAudio, FileText, FolderOpen, History, LayoutDashboard, LayoutTemplate, Ellipsis, ExternalLink, FolderInput, FolderPlus, Lock, Maximize2, Mic, NotebookPen, PanelLeftClose, PanelLeftOpen, Palette, Pencil, Plus, Search, Settings as SettingsIcon, Sparkles, TextSearch, Trash2, X } from 'lucide-react';
-import { api, errorText, Folder, Meeting, send, Settings as SettingsT, Template } from './api';
+import { Archive, ArchiveRestore, ArrowLeft, AudioLines, BookA, BookOpen, Check, ChevronRight, Download, FileAudio, FileText, FolderOpen, History, LayoutDashboard, LayoutTemplate, Ellipsis, ExternalLink, FolderInput, FolderPlus, Lock, Maximize2, Mic, NotebookPen, PanelLeftClose, PanelLeftOpen, Palette, Pencil, Plus, Search, Settings as SettingsIcon, Sparkles, TextSearch, Trash2, X } from 'lucide-react';
+import { api, errorText, Folder, GlossaryEntry, Meeting, send, Settings as SettingsT, Template } from './api';
+import { GlossaryDialog, GlossaryLayer, mergeGlossaries } from './Glossary';
 import Recorder from './Recorder';
 import Settings, { SettingsSection } from './Settings';
 import MeetingView, { MeetingRequest as Req, runMeetingCommand } from './Meeting';
@@ -182,6 +183,9 @@ function App() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [folding, setFolding] = useState<Folding>(readFolding);
   const [folderDialog, setFolderDialog] = useState<{ folder: Folder | null } | null>(null);
+  /** Whose glossary is being edited. */
+  const [glossaryFor, setGlossaryFor] = useState<{ kind: 'meeting' | 'folder'; id: string } | null>(null);
+  const [globalGlossary, setGlobalGlossary] = useState<GlossaryEntry[]>([]);
   const [renamingFolder, setRenamingFolder] = useState<{ id: string; name: string } | null>(null);
   const [folderMenu, setFolderMenu] = useState<{ folder: Folder; x: number; y: number } | null>(null);
   const [deletingFolder, setDeletingFolder] = useState<Folder | null>(null);
@@ -201,6 +205,7 @@ function App() {
       setViews({ notes: s.notes_view === 'preview' ? 'preview' : 'write', ai: s.ai_notes_view === 'write' ? 'write' : 'preview' });
       setBackMode(s.back_behavior === 'history' ? 'history' : 'up');
       setNoteLanguage(s.output_language || 'auto');
+      setGlobalGlossary(s.glossary || []);
     },
     [],
   );
@@ -577,10 +582,53 @@ function App() {
     { label: 'New meeting here', icon: <Plus size={15} />, onSelect: () => void newMeeting(undefined, false, f.id) },
     { label: 'Import recording here', icon: <FileAudio size={15} />, onSelect: () => void newMeeting(undefined, true, f.id) },
     { label: 'Customize…', hint: 'Name, colour and icon', icon: <Palette size={15} />, onSelect: () => setFolderDialog({ folder: f }) },
+    { label: 'Glossary…', hint: 'Terms the AI should know here', icon: <BookA size={15} />, onSelect: () => setGlossaryFor({ kind: 'folder', id: f.id }) },
     ...(opts.rename ? [{ label: 'Rename', icon: <Pencil size={15} />, onSelect: () => setRenamingFolder({ id: f.id, name: f.name }) }] : []),
     'divider',
     { label: 'Delete folder…', icon: <Trash2 size={15} />, danger: true, onSelect: () => setDeletingFolder(f) },
   ];
+
+  function glossaryDialog() {
+    const m = glossaryFor?.kind === 'meeting' ? meetings.find(x => x.id === glossaryFor.id) : undefined;
+    const f = folders.find(x => x.id === (glossaryFor?.kind === 'folder' ? glossaryFor.id : m?.folder_id));
+    const target = m || (glossaryFor?.kind === 'folder' ? f : undefined);
+    const layers: GlossaryLayer[] = [
+      {
+        label: 'All notes',
+        entries: globalGlossary,
+        onEdit: () => {
+          setGlossaryFor(null);
+          openSettings('ai');
+        },
+      },
+    ];
+    if (m && f) layers.push({ label: `Folder · ${f.name}`, entries: f.glossary || [], onEdit: () => setGlossaryFor({ kind: 'folder', id: f.id }) });
+    return (
+      <GlossaryDialog
+        key={glossaryFor ? `${glossaryFor.kind}:${glossaryFor.id}` : 'none'}
+        open={!!target}
+        onClose={() => setGlossaryFor(null)}
+        title={m ? `Glossary · ${name(m)}` : `Glossary · ${f?.name}`}
+        description={
+          m
+            ? 'Names, terms, acronyms and spellings the AI should know when it writes this meeting’s notes, even if you never type them. It uses them to recognise misheard words and spell them right.'
+            : 'Terms the AI should know in every meeting in this folder, on top of the ones for all notes.'
+        }
+        entries={target?.glossary || []}
+        inherited={layers}
+        onSave={async glossary => {
+          if (m) {
+            await send(`/meetings/${m.id}`, { glossary }, 'PATCH');
+            await reloadMeetings();
+          } else if (f) {
+            await send(`/folders/${f.id}`, { glossary }, 'PATCH');
+            await reloadFolders();
+          }
+          toast('Glossary saved. It applies the next time AI notes are generated.', 'success');
+        }}
+      />
+    );
+  }
 
   async function confirmDeleteFolder() {
     if (!deletingFolder) return;
@@ -743,6 +791,7 @@ function App() {
         m.archived
           ? { id: 'm-unarchive', kind: 'action', title: 'Restore this meeting from the archive', keywords: ['unarchive'], icon: <ArchiveRestore size={16} />, boost: CONTEXT_BOOST, run: () => void unarchive(m) }
           : { id: 'm-archive', kind: 'action', title: 'Archive this meeting', subtitle: 'Keep it, but out of the way', keywords: ['hide'], icon: <Archive size={16} />, boost: CONTEXT_BOOST, run: () => void archive(m) },
+        { id: 'm-glossary', kind: 'action', title: 'Edit this meeting’s glossary…', subtitle: 'Names, terms and acronyms the AI should know', keywords: ['context', 'keywords', 'terms', 'acronyms', 'vocabulary', 'spelling', 'jargon'], icon: <BookA size={16} />, boost: CONTEXT_BOOST, run: () => setGlossaryFor({ kind: 'meeting', id: m.id }) },
         { id: 'm-export', kind: 'action', title: 'Export this meeting as Markdown', keywords: ['download', 'md', 'save'], icon: <Download size={16} />, boost: CONTEXT_BOOST, run: () => window.open(`/api/meetings/${m.id}/export?format=md`, '_blank') },
         { id: 'm-import', kind: 'action', title: 'Import a recording into this meeting', keywords: ['upload', 'audio', 'voice memo', 'm4a', 'file'], icon: <FileAudio size={16} />, boost: CONTEXT_BOOST, run: () => window.dispatchEvent(new Event('huh:import-audio')) },
         tab('notes', 'Show my notes', <FileText size={16} />, ['notes']),
@@ -757,6 +806,7 @@ function App() {
         { id: 'f-new', kind: 'action', title: `New meeting in ${f.name}`, keywords: ['create', 'start', 'add'], icon: <Plus size={16} />, boost: CONTEXT_BOOST, run: () => void newMeeting(undefined, false, f.id) },
         { id: 'f-import', kind: 'action', title: `Import a recording into ${f.name}`, keywords: ['upload', 'audio', 'voice memo', 'm4a', 'file'], icon: <FileAudio size={16} />, boost: CONTEXT_BOOST, run: () => void newMeeting(undefined, true, f.id) },
         { id: 'f-customize', kind: 'action', title: 'Customize this folder…', subtitle: 'Name, colour and icon', keywords: ['rename', 'color', 'colour', 'icon'], icon: <Palette size={16} />, boost: CONTEXT_BOOST, run: () => setFolderDialog({ folder: f }) },
+        { id: 'f-glossary', kind: 'action', title: `Edit the glossary for ${f.name}…`, subtitle: 'Terms the AI should know in every meeting here', keywords: ['context', 'keywords', 'terms', 'acronyms', 'vocabulary', 'spelling', 'jargon'], icon: <BookA size={16} />, boost: CONTEXT_BOOST, run: () => setGlossaryFor({ kind: 'folder', id: f.id }) },
         { id: 'f-delete', kind: 'action', title: 'Delete this folder…', subtitle: 'Its meetings move back to the main list', keywords: ['remove', 'trash'], icon: <Trash2 size={16} />, danger: true, run: () => setDeletingFolder(f) },
       );
     }
@@ -1045,6 +1095,8 @@ function App() {
               onRequestDelete={() => current && setDeleting(current)}
               organize={current ? organizeActions(current) : []}
               folder={current ? folders.find(f => f.id === current.folder_id) : undefined}
+              glossaryCount={current ? mergeGlossaries(globalGlossary, folders.find(f => f.id === current.folder_id)?.glossary, current.glossary).length : 0}
+              onGlossary={() => setGlossaryFor({ kind: 'meeting', id: selected })}
               onOpenFolder={openFolder}
               onUnarchive={() => current && void unarchive(current)}
               onManageTemplates={() => openSettings('templates')}
@@ -1067,6 +1119,8 @@ function App() {
               onNew={() => void newMeeting(undefined, false, openFolderObj.id)}
               onImport={() => void newMeeting(undefined, true, openFolderObj.id)}
               onCustomize={() => setFolderDialog({ folder: openFolderObj })}
+              glossaryCount={mergeGlossaries(globalGlossary, openFolderObj.glossary).length}
+              onGlossary={() => setGlossaryFor({ kind: 'folder', id: openFolderObj.id })}
               actions={folderActions(openFolderObj, { rename: false })}
               reloadMeetings={reloadMeetings}
               dnd={dnd}
@@ -1115,6 +1169,7 @@ function App() {
           onClose={() => setFolderDialog(null)}
           onSave={saveFolder}
         />
+        {glossaryDialog()}
         <ConfirmDialog
           open={!!deletingFolder}
           onClose={() => setDeletingFolder(null)}

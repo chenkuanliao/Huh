@@ -23,6 +23,8 @@ DEFAULTS = dict(
     ai_notes_view="preview",
     # What Back does: "up" goes to the parent page (meeting → its folder → Home); "history" retraces visited pages.
     back_behavior="up",
+    # Glossary entries [{term, meaning}] given to the AI for every meeting.
+    glossary=[],
 )
 PROVIDERS = {
     "chatgpt",
@@ -64,8 +66,8 @@ def iso(value):
 
 def public(obj):
     fields = {
-        Meeting: "id title notes notes_revision enhanced_notes enhanced_revision template_id language notes_language folder_id archived created_at updated_at status",
-        Folder: "id name color icon created_at",
+        Meeting: "id title notes notes_revision enhanced_notes enhanced_revision template_id language notes_language folder_id archived glossary created_at updated_at status",
+        Folder: "id name color icon glossary created_at",
         Recording: "id meeting_id device_id label mime_type status created_at duration bytes chunk_count",
         Device: "id name meeting_id ready backup_enabled last_seen recording_id",
         Segment: "id recording_id start end text language",
@@ -74,6 +76,8 @@ def public(obj):
         Generation: "id content created_at provider model template_name notes_revision output_language",
     }[type(obj)].split()
     result = {key: getattr(obj, key) for key in fields}
+    if "glossary" in result:
+        result["glossary"] = result["glossary"] or []
     for key in ["created_at", "updated_at", "last_seen"]:
         if key in result:
             result[key] = iso(result[key])
@@ -84,6 +88,47 @@ def public(obj):
 
 def settings(s):
     return DEFAULTS | getkv(s, "settings")
+
+
+GLOSSARY_MAX_ENTRIES = 300
+
+
+def glossary_entries(value):
+    """Validates [{term, meaning?}] from a client; trims text and drops blank rows."""
+    if not isinstance(value, list) or len(value) > GLOSSARY_MAX_ENTRIES:
+        fail(f"A glossary is a list of at most {GLOSSARY_MAX_ENTRIES} entries", 422)
+    out = []
+    for item in value:
+        if not isinstance(item, dict):
+            fail("Invalid glossary entry", 422)
+        term, meaning = item.get("term", ""), item.get("meaning", "")
+        if not isinstance(term, str) or not isinstance(meaning, str):
+            fail("Invalid glossary entry", 422)
+        term, meaning = term.strip(), meaning.strip()
+        if len(term) > 200 or len(meaning) > 2000:
+            fail("A glossary term is limited to 200 characters and its meaning to 2000", 422)
+        if term:
+            out.append({"term": term, "meaning": meaning})
+        elif meaning:
+            fail("Every glossary entry needs a term", 422)
+    return out
+
+
+def meeting_glossary(s, m):
+    """Everything the AI should know for this meeting: all-notes, then folder, then meeting
+    entries. A more specific entry replaces a broader one with the same term."""
+    folder = s.get(Folder, m.folder_id) if m.folder_id else None
+    merged = {}
+    for entries in (
+        settings(s).get("glossary") or [],
+        (folder.glossary or []) if folder else [],
+        m.glossary or [],
+    ):
+        for e in entries:
+            key = e["term"].casefold()
+            merged.pop(key, None)
+            merged[key] = {"term": e["term"], "meaning": e.get("meaning", "")}
+    return list(merged.values())
 
 
 def recordings(s, mid):
@@ -156,6 +201,7 @@ def generate(s, m, template_id=None, output_language=None):
         "template_name": template.name if template else "Meeting notes",
         "instructions": template.instructions if template else "",
         "structure": template.structure if template else "",
+        "glossary": meeting_glossary(s, m),
         "transcript": [
             {
                 "source": labels[x.recording_id],

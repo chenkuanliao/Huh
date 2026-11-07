@@ -54,7 +54,14 @@ export const SETTINGS_INDEX: SettingEntry[] = [
     section: 'ai',
     title: 'Extra instructions',
     description: 'Things the AI should always keep in mind, like names to spell a certain way.',
-    keywords: 'system prompt custom instructions writing style tone format bullet points spelling names glossary rules',
+    keywords: 'system prompt custom instructions writing style tone format bullet points spelling names rules',
+  },
+  {
+    id: 'ai-glossary',
+    section: 'ai',
+    title: 'Glossary',
+    description: 'Names, terms, acronyms and spellings the AI should know in every meeting. Folders and meetings can add their own.',
+    keywords: 'glossary context keywords words terms vocabulary jargon acronyms abbreviations names people spelling dictionary definitions background knowledge',
   },
 
   // Transcription

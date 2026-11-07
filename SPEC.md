@@ -12,15 +12,16 @@ All paths below under /api; JSON unless specified. Error shape {detail:string}; 
 - GET /meetings -> Meeting[]
 - POST /meetings {title?, template_id?, folder_id?} -> Meeting
 - GET /meetings/{id} -> MeetingDetail
-- PATCH /meetings/{id} {title?, notes?, notes_revision?, enhanced_notes?, enhanced_revision?, template_id?, language?, notes_language?, folder_id?, archived?} -> Meeting; folder_id/archived alone don't bump updated_at; optimistic revision checks on editable text; notes/enhanced_notes are markdown plain strings.
+- PATCH /meetings/{id} {title?, notes?, notes_revision?, enhanced_notes?, enhanced_revision?, template_id?, language?, notes_language?, folder_id?, archived?, glossary?} -> Meeting; folder_id/archived/glossary alone don't bump updated_at; optimistic revision checks on editable text; notes/enhanced_notes are markdown plain strings.
 - DELETE /meetings/{id}
 - POST /meetings/{id}/generate {template_id?, output_language?} -> Job (enqueue; transcript needed; empty user notes allowed). Language: output_language > meeting notes_language > settings output_language. The note keeps one main language; names/terms may stay as spoken. "auto" resolves to the dominant transcript+notes language (all-English meetings get English only).
 - POST /meetings/{id}/transcribe {} -> Job (queues pending complete recordings, then generation)
 - GET /meetings/{id}/export?format=md -> file
 - GET /search?q= -> {results:[{meeting_id,title,field,snippet,updated_at,archived,recording_id?,start?,segment_id?}]}; archived meetings always rank after active ones
-- GET /folders -> Folder[]; POST /folders {name, color?, icon?} -> Folder; PATCH /folders/{id} {name?, color?, icon?} -> Folder; DELETE /folders/{id} (meetings move out, nothing else is deleted)
-Folder {id,name,color,icon,created_at}; color is null or one of slate|red|orange|amber|green|teal|blue|indigo|violet|pink; icon is null or a kebab-case icon key drawn by the client
-Meeting {id,title,notes,notes_revision,enhanced_notes,enhanced_revision,template_id,language,notes_language,folder_id,archived,created_at,updated_at,status}
+- GET /folders -> Folder[]; POST /folders {name, color?, icon?} -> Folder; PATCH /folders/{id} {name?, color?, icon?, glossary?} -> Folder; DELETE /folders/{id} (meetings move out, nothing else is deleted)
+Folder {id,name,color,icon,glossary,created_at}; color is null or one of slate|red|orange|amber|green|teal|blue|indigo|violet|pink; icon is null or a kebab-case icon key drawn by the client
+Meeting {id,title,notes,notes_revision,enhanced_notes,enhanced_revision,template_id,language,notes_language,folder_id,archived,glossary,created_at,updated_at,status}
+Glossary: GlossaryEntry[] {term (1–200 chars), meaning (≤2000, may be empty)}, at most 300; blank rows dropped. Settings.glossary applies to every meeting, Folder.glossary to its meetings, Meeting.glossary to one meeting. Generation snapshots the merged list (all notes → folder → meeting; a narrower entry replaces a broader one with the same case-insensitive term) into the system prompt as background for recognising misheard/abbreviated terms, never as meeting content.
 Archive keeps a meeting intact but hides it from the main list and dashboard; it stays searchable, ranked last.
 MeetingDetail extends Meeting with {recordings:Recording[],transcript:TranscriptSegment[],generations:Generation[],jobs:Job[],recording_state:RecordingState}
 TranscriptSegment {id,recording_id,start:number,end:number,text:string,language?:string}
@@ -53,7 +54,7 @@ Server monitors heartbeat expiry (~12s) and start timeout (~15s), triggers expli
 Template {id,name,instructions,structure,is_default?}
 - GET /settings -> Settings (no credentials)
 - PUT /settings partial -> Settings. Input may include api_keys object provider->key; blank leaves unchanged; explicit clear via null.
-Settings {provider,model,base_url,system_prompt,output_language,stt_model,stt_language,stt_device,stt_compute_type,traditional_chinese,notes_view,ai_notes_view,back_behavior,api_key_status:Record<string,boolean>}; back_behavior "up" (default: meeting → its folder → Home) | "history" (previously visited page)
+Settings {provider,model,base_url,system_prompt,output_language,stt_model,stt_language,stt_device,stt_compute_type,traditional_chinese,notes_view,ai_notes_view,back_behavior,glossary,api_key_status:Record<string,boolean>}; back_behavior "up" (default: meeting → its folder → Home) | "history" (previously visited page)
 Defaults provider chatgpt, output_language auto, stt_model large-v3-turbo, stt_language mixed (options auto/en/zh/mixed), stt_device cuda, stt_compute_type float16, traditional_chinese true.
 Providers IDs chatgpt/openai/anthropic/google/openrouter/opencode/nvidia/custom. Keep provider adapters and platform-specific parameters; no automatic paid fallback.
 - POST /settings/test {provider?,model?} -> {ok,message}; actual small inference explicitly requested by user

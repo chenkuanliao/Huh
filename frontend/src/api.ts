@@ -55,11 +55,14 @@ export type Meeting = {
   notes_language: string | null;
   folder_id: string | null;
   archived: boolean;
+  glossary?: GlossaryEntry[];
   status: string;
   created_at: string;
   updated_at: string;
 };
-export type Folder = { id: string; name: string; color: string | null; icon: string | null; created_at: string };
+/** A name, term, acronym or spelling the AI should know when it writes notes. */
+export type GlossaryEntry = { term: string; meaning: string };
+export type Folder = { id: string; name: string; color: string | null; icon: string | null; glossary?: GlossaryEntry[]; created_at: string };
 export type Device = {
   id: string;
   name: string;
@@ -134,6 +137,7 @@ export type Settings = {
   notes_view: 'write' | 'preview';
   ai_notes_view: 'write' | 'preview';
   back_behavior: 'up' | 'history';
+  glossary: GlossaryEntry[];
   api_key_status: Record<string, boolean>;
 };
 export type ChatGPTStatus = {
