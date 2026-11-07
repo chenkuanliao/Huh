@@ -13,7 +13,7 @@ All paths below under /api; JSON unless specified. Error shape {detail:string}; 
 - POST /meetings {title?, template_id?, folder_id?} -> Meeting
 - GET /meetings/{id} -> MeetingDetail
 - PATCH /meetings/{id} {title?, notes?, notes_revision?, enhanced_notes?, enhanced_revision?, template_id?, language?, notes_language?, folder_id?, archived?, glossary?} -> Meeting; folder_id/archived/glossary alone don't bump updated_at; optimistic revision checks on editable text; notes/enhanced_notes are markdown plain strings.
-- DELETE /meetings/{id}
+- DELETE /meetings/{id}[?force=true] — 409 while a recording is starting/recording/stopping/uploading unless force; force drops the capture and stops the meeting's jobs (the device gets a `discard` command)
 - POST /meetings/{id}/generate {template_id?, output_language?} -> Job (enqueue; transcript needed; empty user notes allowed). Language: output_language > meeting notes_language > settings output_language. The note keeps one main language; names/terms may stay as spoken. "auto" resolves to the dominant transcript+notes language (all-English meetings get English only).
 - POST /meetings/{id}/transcribe {} -> Job (queues pending complete recordings, then generation)
 - GET /meetings/{id}/export?format=md -> file
@@ -26,7 +26,8 @@ Archive keeps a meeting intact but hides it from the main list and dashboard; it
 MeetingDetail extends Meeting with {recordings:Recording[],transcript:TranscriptSegment[],generations:Generation[],jobs:Job[],recording_state:RecordingState}
 TranscriptSegment {id,recording_id,start:number,end:number,text:string,language?:string}
 Generation {id,content,created_at,provider,model,template_name,notes_revision,output_language?}
-Job {id,kind,status,progress,error?,created_at,notices?:AINotice[]}
+Job {id,kind,status,progress,error?,created_at,notices?:AINotice[]}; status queued|running|paused|cancelled|completed|failed
+- POST /jobs/{id}/control {action:'pause'|'resume'|'cancel'} -> Job (transcribe/generate only). A running job stops at its next checkpoint; pause keeps AI checkpoints; cancel keeps audio/transcripts and returns the recording to ready. Transcribing a recording with a paused job resumes it; a new generation cancels paused ones.
 AINotice {at,from:{provider,model}|null,from_label,reason,to:{provider,model}|null,to_label,exhausted?,final?}: a model in the AI order failed mid-generation and the next one took over (or, with exhausted, none worked)
 Recording {id,meeting_id,device_id?,label,mime_type,status,created_at,duration?,bytes,chunk_count}
 
@@ -35,7 +36,7 @@ Devices are page sessions with stable sessionStorage device UUID (different tabs
 - POST /devices/heartbeat {id,name,meeting_id?,ready:boolean,recording_id?:string|null,backup_enabled:boolean,capture_state?:string} -> {device:Device,command:Command|null}
 - GET /meetings/{id}/devices -> Device[]
 Device {id,name,meeting_id,ready,online,backup_enabled,last_seen,recording_id?}
-Command {type:'start'|'stop'|'pause'|'resume',meeting_id,recording_id,token?:string}; token is supplied for start/stop
+Command {type:'start'|'stop'|'pause'|'resume'|'discard',meeting_id,recording_id,token?:string}; token is supplied for start/stop
 - GET /meetings/{id}/recording-state -> RecordingState
 RecordingState {status:'idle'|'starting'|'recording'|'switching'|'paused',active_device_id:string|null,pending_device_id:string|null,message:string|null,backup_order:string[],auto_fallback:boolean,user_paused?:boolean}
 - POST /meetings/{id}/recording-control {action:'start'|'switch'|'stop'|'pause'|'resume',device_id?:string} -> RecordingState. Intentional pause retains the active source and its MediaRecorder, suppresses backup takeover, and does not finish audio or enqueue AI work. Resume continues the same file; elapsed duration excludes pauses. Stop (labelled Finish) works while paused and automatically starts processing after upload completes. Keep the recording browser open while paused.
@@ -55,8 +56,8 @@ Server monitors heartbeat expiry (~12s) and start timeout (~15s), triggers expli
 Template {id,name,instructions,structure,is_default?}
 - GET /settings -> Settings (no credentials)
 - PUT /settings partial -> Settings. Input may include api_keys object provider->key; blank leaves unchanged; explicit clear via null.
-Settings {provider,model,base_url,system_prompt,output_language,stt_model,stt_language,stt_device,stt_compute_type,traditional_chinese,notes_view,ai_notes_view,back_behavior,glossary,ai_order,api_key_status:Record<string,boolean>}; back_behavior "up" (default: meeting → its folder → Home) | "history" (previously visited page)
-Defaults provider chatgpt, output_language auto, stt_model large-v3-turbo, stt_language mixed (options auto/en/zh/mixed), stt_device cuda, stt_compute_type float16, traditional_chinese true.
+Settings {provider,model,base_url,system_prompt,output_language,stt_model,stt_language,stt_device,stt_compute_type,traditional_chinese,auto_process,notes_view,ai_notes_view,back_behavior,glossary,ai_order,api_key_status:Record<string,boolean>}; back_behavior "up" (default: meeting → its folder → Home) | "history" (previously visited page)
+auto_process (default true): finished recordings are transcribed and AI notes written automatically; false leaves them ready until POST /meetings/{id}/transcribe. Defaults provider chatgpt, output_language auto, stt_model large-v3-turbo, stt_language mixed (options auto/en/zh/mixed), stt_device cuda, stt_compute_type float16, traditional_chinese true.
 Providers IDs chatgpt/openai/anthropic/google/openrouter/opencode/nvidia/custom. Keep provider adapters and platform-specific parameters; no fallback to any provider the owner did not list.
 AI order: Settings.ai_order is the owner's ranked [{provider,model}] list (≤12, exact duplicates dropped; GET always returns at least one entry, derived from provider/model for older settings). PUT ai_order sets it and provider/model mirror its first entry; PUT provider/model alone moves that pair to the top. Generation runs each inference step on the first entry that works: entries not connected or without a model are skipped quietly; any other provider failure (usage/rate limit, auth, outage, incomplete output) drops that entry for the rest of the attempt and reruns only the failed step, with that step's full context, on the next entry, recording an AINotice on the job. Finished steps are checkpointed on the job (keyed by their prompt) so retries resume; checkpoints are cleared on success. If every entry fails the attempt fails with each entry's reason (normal job retries apply). Generation.provider/model record the model that actually wrote the note.
 - GET /ai/notices -> {jobs:[{id,meeting_id,meeting_title,status,notices}]} generate jobs from the last day that have notices; the client polls it for app-wide pop-ups

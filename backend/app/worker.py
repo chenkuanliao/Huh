@@ -33,11 +33,15 @@ def claim_job():
         return job
 
 
+class Stopped(Exception):
+    """The owner paused or cancelled the job (or deleted its meeting) while it was running."""
+
+
 def heartbeat(job, stop):
     while not stop.wait(20):
         with tx() as s:
             j = s.get(Job, job.id)
-            if not j or j.claim != job.claim:
+            if not j or j.claim != job.claim or j.status != "running":
                 return
             j.lease = now() + LEASE_SECONDS
             value = getkv(s, "worker")
@@ -46,9 +50,20 @@ def heartbeat(job, stop):
 
 def current(s, job):
     j = s.get(Job, job.id)
-    if not j or j.claim != job.claim or j.status != "running":
+    if not j or j.status in ["paused", "cancelled"]:
+        raise Stopped()
+    if j.claim != job.claim or j.status != "running":
         raise RuntimeError("Job lease was lost")
     return j
+
+
+def check(job, every=2.0):
+    """Cheap cooperative stop point for long loops: looks at the job at most every `every` seconds."""
+    t = time.monotonic()
+    if t - getattr(job, "_checked", 0) >= every:
+        job._checked = t
+        with tx() as s:
+            current(s, job)
 
 
 def progress(job, value):
@@ -283,6 +298,7 @@ def transcribe_job(job):
             segments, info = model.transcribe(str(path), **kwargs)
             regions = None
             for segment in segments:
+                check(job)
                 raw = segment.text.strip()
                 if raw and len(raw) <= 30:
                     if regions is None:
@@ -493,6 +509,7 @@ class AIChain:
             done = self.steps[key]
             self.used = {"provider": done["provider"], "model": done["model"]}
             return done["text"]
+        check(self.job, 0)
         while self.at < len(self.order):
             entry = self.order[self.at]
             try:
@@ -689,6 +706,8 @@ def process(job):
             j.status = "completed"
             j.progress = 1
             j.lease = 0
+    except Stopped:
+        log.info("Job %s stopped by the owner", job.id)
     except Exception as exc:
         # Never persist raw provider bodies, tokens, paths or request URLs in job errors.
         safe = (
@@ -700,7 +719,8 @@ def process(job):
         )
         with tx() as s:
             j = s.get(Job, job.id)
-            if j and j.claim == job.claim:
+            # A job paused or cancelled meanwhile keeps that status.
+            if j and j.claim == job.claim and j.status == "running":
                 j.error = safe[:500]
                 j.status = "queued" if j.attempts < 3 else "failed"
                 j.available = now() + min(300, 10 * 2**j.attempts)

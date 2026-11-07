@@ -1298,3 +1298,115 @@ def test_built_assets_are_cached_forever_and_the_page_is_revalidated(client, tmp
     assert asset.status_code == 200 and "immutable" in asset.headers["cache-control"]
     assert client.get("/").headers["cache-control"] == "no-cache"
     assert client.get("/some/meeting").headers["cache-control"] == "no-cache"
+
+
+def test_auto_process_off_waits_for_the_owner(client):
+    assert client.get("/api/settings").json()["auto_process"] is True
+    assert client.put("/api/settings", json={"auto_process": False}).json()["auto_process"] is False
+    mid = meeting(client)
+    r, h = upload(client, mid)
+    rid = r["recording_id"]
+    client.post(f"/api/recordings/{rid}/finish", json={"token": r["token"], "chunk_count": 1})
+    d = client.get(f"/api/meetings/{mid}").json()
+    assert d["jobs"] == [] and d["recordings"][0]["status"] == "ready"
+    # Starting it by hand queues transcription as usual.
+    job = client.post(f"/api/meetings/{mid}/transcribe").json()
+    assert job["kind"] == "transcribe" and job["status"] == "queued"
+
+
+def test_pause_resume_and_cancel_jobs(client, monkeypatch):
+    mid = meeting(client)
+    r, h = upload(client, mid)
+    rid = r["recording_id"]
+    client.post(f"/api/recordings/{rid}/finish", json={"token": r["token"], "chunk_count": 1})
+    jid = client.get(f"/api/meetings/{mid}").json()["jobs"][0]["id"]
+    ctl = lambda action: client.post(f"/api/jobs/{jid}/control", json={"action": action})
+
+    # Paused while queued: the worker skips it and the recording waits.
+    assert ctl("pause").json()["status"] == "paused"
+    assert worker.claim_job() is None
+    assert client.get(f"/api/meetings/{mid}").json()["recordings"][0]["status"] == "ready"
+    assert ctl("pause").status_code == 409
+    # "Transcribe now" resumes the paused job instead of starting a second one.
+    assert client.post(f"/api/meetings/{mid}/transcribe").json()["id"] == jid
+    with tx() as s:
+        assert len(list(s.scalars(select(Job).where(Job.meeting_id == mid)))) == 1
+        assert s.get(Job, jid).status == "queued"
+
+    # Paused while running: the worker stops at its next checkpoint and keeps the paused status.
+    job = worker.claim_job()
+
+    def transcribe_job(j):
+        ctl("pause")
+        worker.progress(j, 0.5)
+        raise AssertionError("should have stopped")
+
+    monkeypatch.setattr(worker, "transcribe_job", transcribe_job)
+    worker.process(job)
+    with tx() as s:
+        j = s.get(Job, jid)
+        assert j.status == "paused" and not j.error
+    assert ctl("resume").json()["status"] == "queued"
+    assert client.get(f"/api/meetings/{mid}").json()["recordings"][0]["status"] == "queued"
+
+    # Cancelled: never runs again; the audio can still be transcribed later.
+    assert ctl("cancel").json()["status"] == "cancelled"
+    assert worker.claim_job() is None
+    assert ctl("resume").status_code == 409
+    assert client.get(f"/api/meetings/{mid}").json()["recordings"][0]["status"] == "ready"
+    assert client.post(f"/api/meetings/{mid}/transcribe").json()["id"] != jid
+
+
+def test_cancel_running_generation_stops_before_next_ai_step(client, monkeypatch):
+    mid = transcript_meeting(client, ["word " * 3000 for _ in range(4)])
+    client.put("/api/settings", json={"ai_order": [{"provider": "openai", "model": "gpt-a"}], "api_keys": {"openai": "sk-test"}})
+    jid = client.post(f"/api/meetings/{mid}/generate", json={}).json()["id"]
+    calls = []
+
+    def infer(cfg, system, prompt):
+        calls.append(prompt[:10])
+        client.post(f"/api/jobs/{jid}/control", json={"action": "cancel"})
+        return "- point [[T1]]"
+
+    monkeypatch.setattr(providers, "infer", infer)
+    worker.process(worker.claim_job())
+    d = client.get(f"/api/meetings/{mid}").json()
+    assert len(calls) == 1 and d["generations"] == []
+    assert d["jobs"][0]["status"] == "cancelled"
+
+
+def test_force_delete_while_recording_and_device_drops_capture(client):
+    mid = meeting(client)
+    a, ha = device(client, mid)
+    cmd = start(client, mid, a, ha)
+    rid = cmd["recording_id"]
+    ha.update(recording_id=rid, capture_state="recording")
+    assert client.delete(f"/api/meetings/{mid}").status_code == 409
+    # Finish was pressed but the recording device never came back: still blocked without force.
+    client.post(f"/api/meetings/{mid}/recording-control", json={"action": "stop"})
+    assert client.delete(f"/api/meetings/{mid}").status_code == 409
+    assert client.delete(f"/api/meetings/{mid}?force=true").status_code == 200
+    with tx() as s:
+        assert s.get(Meeting, mid) is None and s.get(Recording, rid) is None
+    # The recording device learns its capture is gone and drops it, instead of erroring forever.
+    res = client.post("/api/devices/heartbeat", json=ha)
+    assert res.status_code == 200
+    assert res.json()["command"]["type"] == "discard"
+    ha.update(recording_id=None, capture_state="idle")
+    assert client.post("/api/devices/heartbeat", json=ha).json()["command"] is None
+
+
+def test_force_delete_stops_running_work(client, monkeypatch):
+    mid = meeting(client)
+    r, h = upload(client, mid)
+    client.post(f"/api/recordings/{r['recording_id']}/finish", json={"token": r["token"], "chunk_count": 1})
+    job = worker.claim_job()
+
+    def transcribe_job(j):
+        assert client.delete(f"/api/meetings/{mid}").status_code == 200
+        worker.progress(j, 0.5)
+
+    monkeypatch.setattr(worker, "transcribe_job", transcribe_job)
+    worker.process(job)
+    with tx() as s:
+        assert s.get(Job, job.id) is None

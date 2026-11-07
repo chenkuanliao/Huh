@@ -80,6 +80,13 @@ export const SETTINGS_INDEX: SettingEntry[] = [
     keywords: 'speech language english chinese 中文 mandarin mixed bilingual code switching auto detect transcription transcript recognise recognize',
   },
   {
+    id: 'stt-auto',
+    section: 'transcription',
+    title: 'Process recordings automatically',
+    description: 'Transcribe and write AI notes as soon as a recording finishes, or wait until you tap Process.',
+    keywords: 'auto automatic pipeline after recording finish start transcribe generate wait manual pause queue',
+  },
+  {
     id: 'stt-traditional',
     section: 'transcription',
     title: 'Traditional Chinese (繁體)',
