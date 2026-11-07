@@ -5,17 +5,78 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Recent GET results, kept in memory only (API responses are no-store, so nothing reaches the disk cache).
+ * The server tags JSON with an ETag; sending it back turns an unchanged poll into an empty 304, so a
+ * phone on Tailscale isn't re-downloading a whole transcript every few seconds, and an unchanged result
+ * keeps the same object, so React skips re-rendering it.
+ */
+type Cached = { etag: string; data: unknown; at: number };
+const cache = new Map<string, Cached>();
+const CACHE_MAX = 24;
+const inflight = new Map<string, Promise<unknown>>();
+
+function remember(path: string, entry: Cached) {
+  cache.delete(path); // re-insert so the Map stays in least-recently-used order
+  cache.set(path, entry);
+  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!);
+}
+
+/** The last result fetched for `path`, if any (may be a few seconds old). */
+export function peek<T>(path: string): T | undefined {
+  return cache.get(path)?.data as T | undefined;
+}
+
+/** Forget cached results whose path starts with `prefix` (or everything). */
+export function forget(prefix = '') {
+  for (const key of [...cache.keys()]) if (key.startsWith(prefix)) cache.delete(key);
+}
+
+/** Warm the cache for `path` in the background unless it was fetched in the last `fresh` ms. */
+export function prefetch(path: string, fresh = 10000) {
+  const hit = cache.get(path);
+  if (inflight.has(path) || (hit && Date.now() - hit.at < fresh)) return;
+  void api(path).catch(() => {});
+}
+
 export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+  const read = !options.method || options.method === 'GET';
+  if (!read) return request<T>(path, options);
+  // Share one request between callers asking for the same thing at once (e.g. a prefetch and the page).
+  if (!options.signal) {
+    const pending = inflight.get(path);
+    if (pending) return pending as Promise<T>;
+  }
+  const p = request<T>(path, options, true);
+  if (!options.signal) {
+    inflight.set(path, p);
+    p.then(
+      () => inflight.delete(path),
+      () => inflight.delete(path),
+    );
+  }
+  return p;
+}
+
+async function request<T>(path: string, options: RequestInit, read = false): Promise<T> {
+  const hit = read ? cache.get(path) : undefined;
   const response = await fetch('/api' + path, {
     credentials: 'same-origin',
     signal: AbortSignal.timeout(30000),
     ...options,
     headers: {
       ...(options.body && typeof options.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
+      ...(hit ? { 'If-None-Match': hit.etag } : {}),
       ...options.headers,
     },
   });
+  if (response.status === 304 && hit) {
+    hit.at = Date.now();
+    remember(path, hit);
+    return hit.data as T;
+  }
   if (!response.ok) {
+    if (read) cache.delete(path);
     let message = response.statusText;
     try {
       const body = await response.json();
@@ -23,11 +84,12 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
     } catch {}
     throw new ApiError(response.status, message);
   }
-  return response.status === 204
-    ? (undefined as T)
-    : response.headers.get('content-type')?.includes('json')
-      ? response.json()
-      : (undefined as T);
+  if (response.status === 204) return undefined as T;
+  if (!response.headers.get('content-type')?.includes('json')) return undefined as T;
+  const data = await response.json();
+  const etag = read && response.headers.get('etag');
+  if (etag) remember(path, { etag, data, at: Date.now() });
+  return data;
 }
 
 export const send = <T = any>(path: string, body: unknown = {}, method = 'POST') =>

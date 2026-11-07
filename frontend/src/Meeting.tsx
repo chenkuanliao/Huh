@@ -4,7 +4,7 @@ import AudioPlayer, { clock, PlayerHandle } from './AudioPlayer';
 import FindBar from './FindBar';
 import { defaultTitle } from './format';
 import { Archive, BookA, Columns2, ListTodo, Maximize2, NotebookPen, PanelRightClose, Rows3, AudioLines, ChevronDown, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, LocateFixed, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
-import { api, Detail, errorText, Folder, Generation, Job, send, Template } from './api';
+import { api, Detail, errorText, Folder, Generation, Job, Meeting, peek, send, Template } from './api';
 import { FolderGlyph, folderVars } from './folders';
 import Editor from './Editor';
 import { noteLanguageLabel, OUTPUT_LANGUAGES } from './providers';
@@ -58,6 +58,8 @@ const time = clock;
 
 const versionTime = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 /** The saved AI version whose text is currently shown in AI notes, if any. */
+/** The tab a meeting opens on: AI notes once they exist, otherwise My notes. */
+const openingTab = (d: Detail | null): Tab => (d?.enhanced_notes.trim() ? 'enhanced' : 'notes');
 const shownVersion = (detail: Detail) => detail.generations.find(g => g.content.trim() === detail.enhanced_notes.trim());
 
 function VersionPicker({ detail, onShow, placement }: { detail: Detail; onShow: (g: Generation) => void; placement?: 'bottom-start' | 'bottom-end' }) {
@@ -158,9 +160,10 @@ export default function MeetingView({
   request?: MeetingRequest | null;
 }) {
   const toast = useToast();
-  const [detail, setDetail] = useState<Detail | null>(null);
+  // A meeting opened before (or prefetched on hover/touch) shows at once; the load below refreshes it.
+  const [detail, setDetail] = useState<Detail | null>(() => peek<Detail>(`/meetings/${id}`) || null);
   const [error, setError] = useState('');
-  const [tab, setTab] = useState<Tab>('notes');
+  const [tab, setTab] = useState<Tab>(() => openingTab(detail));
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
   const [focus, setFocus] = useState(false);
@@ -196,7 +199,7 @@ export default function MeetingView({
   const idRef = useRef(id);
   idRef.current = id;
   // The first load of a meeting picks its opening tab: AI notes once they exist, otherwise My notes.
-  const firstLoad = useRef(true);
+  const firstLoad = useRef(!detail);
 
   const load = useCallback(async () => {
     try {
@@ -206,7 +209,7 @@ export default function MeetingView({
         setError('');
         if (firstLoad.current) {
           firstLoad.current = false;
-          setTab(d.enhanced_notes.trim() ? 'enhanced' : 'notes');
+          setTab(openingTab(d));
         }
       }
     } catch (e) {
@@ -215,12 +218,15 @@ export default function MeetingView({
   }, [id]);
 
   useEffect(() => {
-    setDetail(null);
-    setTab('notes');
-    firstLoad.current = true;
     void load();
-    const timer = setInterval(load, 4000);
-    return () => clearInterval(timer);
+    // Poll while the page is visible; an unchanged meeting costs a tiny 304. Catch up as soon as it's shown again.
+    const timer = setInterval(() => document.hidden || void load(), 4000);
+    const onShow = () => document.hidden || void load();
+    document.addEventListener('visibilitychange', onShow);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onShow);
+    };
   }, [id, load]);
   useEffect(() => {
     if (refreshKey) void load();
@@ -330,12 +336,7 @@ export default function MeetingView({
         <Callout tone="bad">{error}</Callout>
       </div>
     );
-  if (!detail)
-    return (
-      <div className="loading-block page-pad">
-        <Spinner /> Opening meeting…
-      </div>
-    );
+  if (!detail) return <MeetingSkeleton id={id} phone={phone} />;
 
   const created = new Date(detail.created_at || detail.updated_at);
   const jobs = [...detail.jobs].sort((a, b) => b.created_at.localeCompare(a.created_at));
@@ -1189,5 +1190,29 @@ function HistoryView({ detail, onShow, sources }: { detail: Detail; onShow: (g: 
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * Stands in for a meeting that hasn't loaded yet: its title (already known from the meeting list) and a few
+ * placeholder lines, faded in only if loading takes long enough to notice, so fast opens don't flicker.
+ */
+function MeetingSkeleton({ id, phone }: { id: string; phone?: boolean }) {
+  const title = peek<Meeting[]>('/meetings')?.find(m => m.id === id)?.title;
+  return (
+    <div className={cx('meeting', 'meeting-skeleton', phone && 'phone')} aria-busy="true" aria-label="Opening meeting">
+      <header className="meeting-header">
+        <div className="meeting-meta">
+          <span className="sk" style={{ width: 120 }} />
+        </div>
+        <div className="sk-title">{title || <span className="sk" style={{ width: '45%', height: 28 }} />}</div>
+      </header>
+      <div className="sk-body">
+        <span className="sk" style={{ width: 180, height: 30, borderRadius: 999 }} />
+        {['92%', '78%', '85%', '60%', '88%', '70%', '40%'].map((w, i) => (
+          <span key={i} className="sk" style={{ width: w }} />
+        ))}
+      </div>
+    </div>
   );
 }

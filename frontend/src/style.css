@@ -7267,3 +7267,58 @@ body.phone .ai-order-grip {
     transform: translateX(0);
   }
 }
+
+/* ============================================================ meeting skeleton */
+/* Shown only while a meeting that isn't cached yet loads. It fades in after a beat, so quick opens never flash it. */
+.meeting-skeleton {
+  animation: sk-in 0.3s 0.12s var(--ease-out) both !important;
+}
+@keyframes sk-in {
+  from {
+    opacity: 0;
+  }
+}
+.meeting-skeleton .sk-title {
+  font-family: var(--serif);
+  font-size: 32px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+  padding: 2px 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.meeting-skeleton.phone .sk-title {
+  font-size: 26px;
+}
+.meeting-skeleton .sk-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 22px;
+}
+.sk {
+  display: block;
+  height: 14px;
+  max-width: 100%;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--surface-2) 0%, var(--line) 50%, var(--surface-2) 100%);
+  background-size: 200% 100%;
+  animation: sk-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes sk-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .meeting-skeleton {
+    animation: none !important;
+  }
+  .sk {
+    animation: none;
+  }
+}

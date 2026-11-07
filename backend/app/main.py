@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.exceptions import RequestValidationError
+from starlette.middleware.gzip import GZipMiddleware
 from sqlalchemy import select, delete
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, InvalidHashError
@@ -244,10 +245,46 @@ async def protect(request, call_next):
                         {"detail": "Authentication required"}, status_code=401
                     )
     response = await call_next(request)
+    if (
+        request.method == "GET"
+        and request.url.path.startswith("/api")
+        and response.status_code == 200
+        and response.headers.get("content-type", "").startswith("application/json")
+    ):
+        response = await with_etag(request, response)
     response.headers["X-Content-Type-Options"] = "nosniff"
     if request.url.path.startswith("/api"):
         response.headers["Cache-Control"] = "no-store"
     return response
+
+
+async def with_etag(request, response):
+    """Tag JSON reads with a hash of their body so a client that already holds them gets a tiny 304.
+
+    The client keeps the data in memory and sends If-None-Match itself; nothing is written to the browser's cache."""
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    etag = '"' + hashlib.blake2b(body, digest_size=12).hexdigest() + '"'
+    if etag in [t.strip() for t in request.headers.get("if-none-match", "").split(",")]:
+        return Response(status_code=304, headers={"ETag": etag})
+    headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
+    return Response(body, status_code=200, headers=headers | {"ETag": etag})
+
+
+class Compress:
+    """Gzip JSON, HTML, JS and CSS (the phone usually reaches this server over Tailscale), but never audio,
+    which is already compressed and is fetched with Range requests."""
+
+    def __init__(self, app):
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=1024, compresslevel=5)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and not scope["path"].endswith("/audio"):
+            return await self.gzip(scope, receive, send)
+        return await self.app(scope, receive, send)
+
+
+app.add_middleware(Compress)
 
 
 @app.get("/api/health")
@@ -1238,14 +1275,20 @@ def signout():
     return oauth.signout()
 
 
+STATIC_ROOT = Path("/app/static")
+
+
 @app.get("/{path:path}")
 def spa(path: str):
     if path == "api" or path.startswith("api/"):
         fail("Not found", 404)
-    root = Path("/app/static")
+    root = STATIC_ROOT
     target = (root / path).resolve()
     if target.is_relative_to(root) and target.is_file():
-        return FileResponse(target)
+        # Vite puts a content hash in every file name under assets/, so those never change.
+        immutable = target.is_relative_to(root / "assets")
+        return FileResponse(target, headers={"Cache-Control": "public, max-age=31536000, immutable" if immutable else "no-cache"})
     if (root / "index.html").exists():
-        return FileResponse(root / "index.html")
+        # Always revalidate the page itself so a deploy is picked up on the next load.
+        return FileResponse(root / "index.html", headers={"Cache-Control": "no-cache"})
     fail("Frontend is not built", 404)
