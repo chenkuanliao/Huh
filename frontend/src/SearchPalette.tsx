@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AudioLines, FileText, Search, Sparkles, Type } from 'lucide-react';
+import { Archive, AudioLines, FileText, Search, Sparkles, Type } from 'lucide-react';
 import { api } from './api';
 import { clock } from './AudioPlayer';
 import { stripSources } from './Markdown';
@@ -15,6 +15,8 @@ export type SearchResult = {
   recording_id?: string;
   start?: number;
   segment_id?: string;
+  /** Archived meetings are searchable but always come last. */
+  archived?: boolean;
 };
 
 const FIELD = {
@@ -93,11 +95,11 @@ export default function SearchPalette({ open, onClose, onSelect, initial = '' }:
 
   // Group by meeting while keeping a flat order for keyboard navigation.
   const groups = useMemo(() => {
-    const out: { id: string; title: string; updated: string; items: { r: SearchResult; i: number }[] }[] = [];
+    const out: { id: string; title: string; updated: string; archived: boolean; items: { r: SearchResult; i: number }[] }[] = [];
     let i = 0;
     for (const r of results) {
       let g = out.find(x => x.id === r.meeting_id);
-      if (!g) out.push((g = { id: r.meeting_id, title: r.title, updated: r.updated_at, items: [] }));
+      if (!g) out.push((g = { id: r.meeting_id, title: r.title, updated: r.updated_at, archived: !!r.archived, items: [] }));
       g.items.push({ r, i: 0 });
     }
     for (const g of out) for (const it of g.items) it.i = i++;
@@ -151,9 +153,14 @@ export default function SearchPalette({ open, onClose, onSelect, initial = '' }:
           ) : !loading && !results.length ? (
             <p className="palette-empty">No matches for “{query.trim()}”.</p>
           ) : (
-            groups.map(g => (
+            groups.map((g, n) => (
               <Fragment key={g.id}>
-                <div className="palette-group">
+                {g.archived && !groups[n - 1]?.archived && (
+                  <div className="palette-divider">
+                    <Archive size={13} /> From the archive
+                  </div>
+                )}
+                <div className={cx('palette-group', g.archived && 'archived')}>
                   <span className="truncate">{g.title || 'Untitled meeting'}</span>
                   <span>{new Date(g.updated).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
                 </div>

@@ -62,7 +62,8 @@ def iso(value):
 
 def public(obj):
     fields = {
-        Meeting: "id title notes notes_revision enhanced_notes enhanced_revision template_id language created_at updated_at status",
+        Meeting: "id title notes notes_revision enhanced_notes enhanced_revision template_id language folder_id archived created_at updated_at status",
+        Folder: "id name created_at",
         Recording: "id meeting_id device_id label mime_type status created_at duration bytes chunk_count",
         Device: "id name meeting_id ready backup_enabled last_seen recording_id",
         Segment: "id recording_id start end text language",

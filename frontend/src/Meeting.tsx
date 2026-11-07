@@ -3,11 +3,11 @@ import Markdown, { SourceInfo } from './Markdown';
 import AudioPlayer, { clock, PlayerHandle } from './AudioPlayer';
 import FindBar from './FindBar';
 import { defaultTitle } from './format';
-import { Maximize2, AudioLines, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, Folder as FolderIcon, Maximize2, AudioLines, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 import { api, Detail, errorText, Generation, Job, send, Template } from './api';
 import Editor from './Editor';
 import { DeviceIcon } from './Recorder';
-import { Badge, Callout, cx, Menu, Select, Spinner, useToast } from './ui';
+import { Badge, Callout, cx, Menu, MenuItem, Select, Spinner, useToast } from './ui';
 
 export type Tab = 'notes' | 'enhanced' | 'transcript' | 'history';
 export type MeetingRequest = { tab: Tab; query?: string; recordingId?: string; start?: number; segmentId?: string; n: number };
@@ -86,6 +86,9 @@ export default function MeetingView({
   onManageTemplates,
   views,
   request,
+  organize = [],
+  folderName,
+  onUnarchive,
 }: {
   id: string;
   templates: Template[];
@@ -93,6 +96,10 @@ export default function MeetingView({
   onListChanged: () => void;
   onRequestDelete: () => void;
   onManageTemplates: () => void;
+  /** Move-to-folder and archive actions, owned by the sidebar. */
+  organize?: MenuItem[];
+  folderName?: string;
+  onUnarchive?: () => void;
   views: { notes: 'write' | 'preview'; ai: 'write' | 'preview' };
   /** Open a tab, optionally searching and/or moving the transcript playhead (from global search). */
   request?: MeetingRequest | null;
@@ -291,6 +298,11 @@ export default function MeetingView({
             {created.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
           </span>
           {status && <Badge tone={status.tone}>{status.label}</Badge>}
+          {folderName && (
+            <span className="meeting-folder">
+              <FolderIcon size={13} /> {folderName}
+            </span>
+          )}
           <span className="spacer" />
           <Menu
             label="Meeting actions"
@@ -306,6 +318,7 @@ export default function MeetingView({
               },
               { label: 'Import audio file…', icon: <FileAudio size={15} />, onSelect: importAudio },
               { label: 'Export as Markdown', icon: <Download size={15} />, onSelect: () => window.open(`/api/meetings/${id}/export?format=md`, '_blank') },
+              ...(organize.length ? (['divider', ...organize] as MenuItem[]) : []),
               'divider',
               { label: 'Delete meeting…', icon: <Trash2 size={15} />, danger: true, onSelect: onRequestDelete },
             ]}
@@ -329,6 +342,17 @@ export default function MeetingView({
             if (title !== detail.title) void patch({ title });
           }}
         />
+        {detail.archived && (
+          <div className="archived-banner">
+            <Archive size={15} />
+            <span>Archived. It’s kept as is and still searchable, listed after everything else.</span>
+            {onUnarchive && (
+              <button type="button" className="link small" onClick={onUnarchive}>
+                Restore
+              </button>
+            )}
+          </div>
+        )}
       </header>
 
       <div className="tabbar">

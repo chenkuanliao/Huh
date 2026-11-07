@@ -51,10 +51,13 @@ export type Meeting = {
   enhanced_revision: number;
   template_id: string | null;
   language: string;
+  folder_id: string | null;
+  archived: boolean;
   status: string;
   created_at: string;
   updated_at: string;
 };
+export type Folder = { id: string; name: string; created_at: string };
 export type Device = {
   id: string;
   name: string;

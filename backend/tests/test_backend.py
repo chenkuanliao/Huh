@@ -961,3 +961,41 @@ def test_new_ai_version_shows_even_if_my_notes_changed(client, monkeypatch):
     monkeypatch.setattr(providers, "infer", lambda *a: "Fresh AI notes")
     worker.process(worker.claim_job())
     assert client.get(f"/api/meetings/{mid}").json()["enhanced_notes"] == "Fresh AI notes"
+
+
+def test_folders_organise_meetings(client):
+    mid = meeting(client)
+    before = client.get(f"/api/meetings/{mid}").json()["updated_at"]
+    assert client.post("/api/folders", json={"name": "  "}).status_code == 422
+    f = client.post("/api/folders", json={"name": " Research "}).json()
+    assert f["name"] == "Research"
+    assert client.patch(f"/api/folders/{f['id']}", json={"name": "Lab"}).json()["name"] == "Lab"
+    assert [x["name"] for x in client.get("/api/folders").json()] == ["Lab"]
+    m = client.patch(f"/api/meetings/{mid}", json={"folder_id": f["id"]}).json()
+    # Filing a meeting doesn't count as editing it.
+    assert m["folder_id"] == f["id"] and m["updated_at"] == before
+    missing = "00000000-0000-0000-0000-000000000000"
+    assert client.patch(f"/api/meetings/{mid}", json={"folder_id": missing}).status_code == 404
+    # Deleting a folder keeps its meetings.
+    assert client.delete(f"/api/folders/{f['id']}").status_code == 200
+    assert client.get(f"/api/meetings/{mid}").json()["folder_id"] is None
+    assert client.get("/api/folders").json() == []
+    f = client.post("/api/folders", json={"name": "Lab"}).json()
+    assert client.post("/api/meetings", json={"folder_id": f["id"]}).json()["folder_id"] == f["id"]
+
+
+def test_archived_meetings_rank_last_in_search(client):
+    old = meeting(client)
+    new = meeting(client)
+    client.patch(f"/api/meetings/{old}", json={"notes": "roadmap draft", "notes_revision": 0})
+    client.patch(f"/api/meetings/{new}", json={"notes": "roadmap final", "notes_revision": 0})
+    # The most recently edited meeting is archived, yet it must come after the active one.
+    client.patch(f"/api/meetings/{old}", json={"title": "Old"})
+    assert client.patch(f"/api/meetings/{old}", json={"archived": "yes"}).status_code == 422
+    assert client.patch(f"/api/meetings/{old}", json={"archived": True}).json()["archived"] is True
+    found = client.get("/api/search", params={"q": "roadmap"}).json()["results"]
+    assert [(x["meeting_id"], x["archived"]) for x in found] == [(new, False), (old, True)]
+    # Archiving never deletes anything.
+    assert client.get(f"/api/meetings/{old}").json()["notes"] == "roadmap draft"
+    client.patch(f"/api/meetings/{old}", json={"archived": False})
+    assert client.get("/api/search", params={"q": "roadmap"}).json()["results"][0]["meeting_id"] == old

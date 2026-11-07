@@ -10,14 +10,18 @@ All paths below under /api; JSON unless specified. Error shape {detail:string}; 
 - POST /auth/login {password} -> session cookie
 - POST /auth/logout
 - GET /meetings -> Meeting[]
-- POST /meetings {title?, template_id?} -> Meeting
+- POST /meetings {title?, template_id?, folder_id?} -> Meeting
 - GET /meetings/{id} -> MeetingDetail
-- PATCH /meetings/{id} {title?, notes?, notes_revision?, enhanced_notes?, enhanced_revision?, template_id?, language?} -> Meeting; optimistic revision checks on editable text; notes/enhanced_notes are markdown plain strings.
+- PATCH /meetings/{id} {title?, notes?, notes_revision?, enhanced_notes?, enhanced_revision?, template_id?, language?, folder_id?, archived?} -> Meeting; folder_id/archived alone don't bump updated_at; optimistic revision checks on editable text; notes/enhanced_notes are markdown plain strings.
 - DELETE /meetings/{id}
 - POST /meetings/{id}/generate {template_id?} -> Job (enqueue; transcript needed; empty user notes allowed)
 - POST /meetings/{id}/transcribe {} -> Job (queues pending complete recordings, then generation)
 - GET /meetings/{id}/export?format=md -> file
-Meeting {id,title,notes,notes_revision,enhanced_notes,enhanced_revision,template_id,language,created_at,updated_at,status}
+- GET /search?q= -> {results:[{meeting_id,title,field,snippet,updated_at,archived,recording_id?,start?,segment_id?}]}; archived meetings always rank after active ones
+- GET /folders -> Folder[]; POST /folders {name} -> Folder; PATCH /folders/{id} {name} -> Folder; DELETE /folders/{id} (meetings move out, nothing else is deleted)
+Folder {id,name,created_at}
+Meeting {id,title,notes,notes_revision,enhanced_notes,enhanced_revision,template_id,language,folder_id,archived,created_at,updated_at,status}
+Archive keeps a meeting intact but hides it from the main list and dashboard; it stays searchable, ranked last.
 MeetingDetail extends Meeting with {recordings:Recording[],transcript:TranscriptSegment[],generations:Generation[],jobs:Job[],recording_state:RecordingState}
 TranscriptSegment {id,recording_id,start:number,end:number,text:string,language?:string}
 Generation {id,content,created_at,provider,model,template_name,notes_revision}
