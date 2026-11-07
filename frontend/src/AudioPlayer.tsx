@@ -17,8 +17,14 @@ export const clock = (seconds: number) => {
 
 const RATES = [1, 1.25, 1.5, 2, 0.75];
 
-const AudioPlayer = forwardRef<PlayerHandle, { src: string; knownDuration?: number; onTime?: (seconds: number) => void; label?: string }>(function AudioPlayer(
-  { src, knownDuration, onTime, label = 'Recording' },
+const AudioPlayer = forwardRef<PlayerHandle, {
+  src: string;
+  knownDuration?: number;
+  onTime?: (seconds: number) => void;
+  onPlayingChange?: (playing: boolean) => void;
+  label?: string;
+}>(function AudioPlayer(
+  { src, knownDuration, onTime, onPlayingChange, label = 'Recording' },
   ref,
 ) {
   const audio = useRef<HTMLAudioElement>(null);
@@ -30,6 +36,14 @@ const AudioPlayer = forwardRef<PlayerHandle, { src: string; knownDuration?: numb
   const [error, setError] = useState(false);
   const timeCb = useRef(onTime);
   timeCb.current = onTime;
+  const playingCb = useRef(onPlayingChange);
+  playingCb.current = onPlayingChange;
+  useEffect(() => playingCb.current?.(playing), [playing]);
+  // Stop playback when the player goes away (e.g. switching to another recording).
+  useEffect(() => {
+    const el = audio.current;
+    return () => el?.pause();
+  }, []);
 
   function report(t: number) {
     setTime(t);
