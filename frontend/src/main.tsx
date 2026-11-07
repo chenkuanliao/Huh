@@ -52,6 +52,21 @@ function readSidebar(): boolean {
     return true;
   }
 }
+/** Sidebar column width on wide screens, dragged from its right edge; a per-device convenience. */
+const SIDEBAR_WIDTH_KEY = 'huh:sidebar-width';
+const SIDEBAR_DEFAULT = 268;
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 520;
+const clampSidebar = (w: number) =>
+  Math.round(Math.min(Math.max(w, SIDEBAR_MIN), Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, window.innerWidth * 0.5))));
+function readSidebarWidth(): number {
+  try {
+    const v = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    return v ? clampSidebar(v) : SIDEBAR_DEFAULT;
+  } catch {
+    return SIDEBAR_DEFAULT;
+  }
+}
 /** Below this width the sidebar is a drawer over the page instead of a column. */
 const NARROW = '(max-width: 820px)';
 const narrowQuery = () => window.matchMedia(NARROW).matches;
@@ -147,6 +162,8 @@ function App() {
   const [request, setRequest] = useState<MeetingRequest | null>(null);
   const [drawer, setDrawer] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(readSidebar);
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
+  const [resizing, setResizing] = useState(false);
   const narrow = useNarrow();
   const [refreshKey, setRefreshKey] = useState(0);
   const [creating, setCreating] = useState(false);
@@ -208,6 +225,41 @@ function App() {
       localStorage.setItem(SIDEBAR_KEY, sidebarOpen ? '1' : '0');
     } catch {}
   }, [sidebarOpen]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+    } catch {}
+  }, [sidebarWidth]);
+  /** Drag the sidebar's right edge to resize it. */
+  const startResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startW = handle.parentElement!.getBoundingClientRect().width;
+    setResizing(true);
+    const move = (ev: PointerEvent) => setSidebarWidth(clampSidebar(startW + ev.clientX - startX));
+    const end = () => {
+      setResizing(false);
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  }, []);
+  const resizeByKey = useCallback((e: React.KeyboardEvent) => {
+    const step = e.shiftKey ? 48 : 16;
+    if (e.key === 'ArrowLeft') setSidebarWidth(w => clampSidebar(w - step));
+    else if (e.key === 'ArrowRight') setSidebarWidth(w => clampSidebar(w + step));
+    else if (e.key === 'Home') setSidebarWidth(SIDEBAR_MIN);
+    else if (e.key === 'End') setSidebarWidth(clampSidebar(SIDEBAR_MAX));
+    else if (e.key === 'Enter') setSidebarWidth(SIDEBAR_DEFAULT);
+    else return;
+    e.preventDefault();
+  }, []);
   /** Collapse/expand the sidebar column; on narrow screens, open/close the drawer instead. */
   const toggleSidebar = useCallback(() => {
     if (narrowQuery()) setDrawer(d => !d);
@@ -759,7 +811,10 @@ function App() {
   })();
 
   return (
-    <div className={cx('app', !sidebarOpen && 'sidebar-collapsed')}>
+    <div
+      className={cx('app', !sidebarOpen && 'sidebar-collapsed', resizing && 'sidebar-resizing')}
+      style={{ '--sidebar': `${sidebarWidth}px` } as React.CSSProperties}
+    >
       <div className={cx('drawer-scrim', drawer && 'open')} onClick={() => setDrawer(false)} />
       <aside className={cx('sidebar', drawer && 'open')} inert={narrow ? !drawer : !sidebarOpen}>
         <div className="sidebar-top">
@@ -903,6 +958,20 @@ function App() {
             <Lock size={16} /> Lock notebook
           </button>
         </div>
+        <div
+          className="sidebar-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          aria-valuenow={sidebarWidth}
+          aria-valuemin={SIDEBAR_MIN}
+          aria-valuemax={SIDEBAR_MAX}
+          tabIndex={0}
+          title="Drag to resize · double-click to reset"
+          onPointerDown={startResize}
+          onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT)}
+          onKeyDown={resizeByKey}
+        />
       </aside>
 
       <main className="workspace">
