@@ -703,6 +703,13 @@ def heartbeat(body: dict):
                 recording_id=r.id,
                 token=decrypt(r.token),
             )
+        elif mid:
+            m = require(s, Meeting, mid)
+            if m.state.get("active_device_id") == id:
+                r = next((r for r in reversed(recordings(s, mid)) if r.device_id == id and r.status == "recording"), None)
+                desired = "paused" if m.state.get("user_paused") else "recording"
+                if r and d.capture_state in ["recording", "paused"] and d.capture_state != desired:
+                    command = dict(type="pause" if desired == "paused" else "resume", meeting_id=mid, recording_id=r.id)
         return {"device": public(d), "command": command}
 
 
@@ -751,7 +758,18 @@ def control(mid: str, body: dict):
         action = body.get("action")
         if action == "stop":
             stop(s, m)
+        elif action in ["pause", "resume"]:
+            st = dict(m.state)
+            if not st.get("active_device_id") or st.get("pending_device_id"):
+                fail("An active recording is required")
+            paused = action == "pause"
+            st.update(user_paused=paused, status="paused" if paused else "recording",
+                      message="Paused. Resume when ready, or finish to transcribe and generate AI notes." if paused else None)
+            m.state = st
+            m.status = st["status"]
         elif action in ["start", "switch"]:
+            if m.state.get("user_paused"):
+                fail("Resume or finish the paused recording first")
             if m.state.get("pending_device_id"):
                 fail("A device is already starting")
             if action == "start" and m.state.get("active_device_id"):
@@ -909,7 +927,8 @@ def finish(rid: str, body: dict):
         m.state = st
         m.status = st["status"]
         monitor(s, m)
-        transcribe(s, r)
+        if not m.state.get("user_paused"):
+            transcribe(s, r)
         result = public(r)
     remove_pieces(DATA / "recordings" / rid)
     return result

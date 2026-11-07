@@ -33,10 +33,10 @@ Devices are page sessions with stable sessionStorage device UUID (different tabs
 - POST /devices/heartbeat {id,name,meeting_id?,ready:boolean,recording_id?:string|null,backup_enabled:boolean,capture_state?:string} -> {device:Device,command:Command|null}
 - GET /meetings/{id}/devices -> Device[]
 Device {id,name,meeting_id,ready,online,backup_enabled,last_seen,recording_id?}
-Command {type:'start'|'stop',meeting_id,recording_id,token:string}
+Command {type:'start'|'stop'|'pause'|'resume',meeting_id,recording_id,token?:string}; token is supplied for start/stop
 - GET /meetings/{id}/recording-state -> RecordingState
-RecordingState {status:'idle'|'starting'|'recording'|'switching'|'paused',active_device_id:string|null,pending_device_id:string|null,message:string|null,backup_order:string[],auto_fallback:boolean}
-- POST /meetings/{id}/recording-control {action:'start'|'switch'|'stop',device_id?:string} -> RecordingState
+RecordingState {status:'idle'|'starting'|'recording'|'switching'|'paused',active_device_id:string|null,pending_device_id:string|null,message:string|null,backup_order:string[],auto_fallback:boolean,user_paused?:boolean}
+- POST /meetings/{id}/recording-control {action:'start'|'switch'|'stop'|'pause'|'resume',device_id?:string} -> RecordingState. Intentional pause retains the active source and its MediaRecorder, suppresses backup takeover, and does not finish audio or enqueue AI work. Resume continues the same file; elapsed duration excludes pauses. Stop (labelled Finish) works while paused and automatically starts processing after upload completes. Keep the recording browser open while paused.
 - PATCH /meetings/{id}/recording-policy {auto_fallback:boolean,backup_order:string[]} -> RecordingState
 - POST /recordings/{id}/started {token} -> Recording; confirms new capture before old device gets stop command. Idempotent. Device must verify capture stream live first.
 - PUT /recordings/{id}/chunks/{index} raw bytes, Content-Type actual mime; X-Recording-Token for live device chunks. SHA256 duplicate validation, ordered indexes. Return {index,bytes}. Save chunks atomically. Blob fragments assembled in sequence before decoding; never assume each MediaRecorder blob independently decodable.

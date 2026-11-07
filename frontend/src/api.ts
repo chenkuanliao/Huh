@@ -69,6 +69,7 @@ export type Device = {
   last_seen?: string;
 };
 export type RecordingState = {
+  user_paused?: boolean;
   status: string;
   active_device_id: string | null;
   pending_device_id: string | null;

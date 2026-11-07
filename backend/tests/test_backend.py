@@ -235,6 +235,40 @@ def test_armed_ordered_failover_and_start_timeout(client):
     )
 
 
+def test_pause_resume_keeps_one_recording_and_defers_processing(client):
+    mid = meeting(client)
+    a, ha = device(client, mid)
+    b, hb = device(client, mid, "Backup")
+    active = start(client, mid, a, ha)
+    rid = active["recording_id"]
+    endpoint = f"/api/meetings/{mid}/recording-control"
+    client.patch(f"/api/meetings/{mid}/recording-policy", json={"auto_fallback": True, "backup_order": [b]})
+    ha.update(recording_id=rid, capture_state="recording")
+    for _ in range(2):
+        assert client.post(endpoint, json={"action": "pause"}).json()["status"] == "paused"
+        assert command(client, ha)["type"] == "pause"
+        ha["capture_state"] = "paused"
+        assert command(client, ha) is None
+        assert command(client, hb) is None
+        assert client.get(f"/api/meetings/{mid}/recording-state").json()["status"] == "paused"
+        assert client.post(endpoint, json={"action": "resume"}).json()["status"] == "recording"
+        cmd = command(client, ha)
+        assert cmd["type"] == "resume" and cmd["recording_id"] == rid
+        ha["capture_state"] = "recording"
+    with tx() as s:
+        assert len(list(s.scalars(select(Recording).where(Recording.meeting_id == mid)))) == 1
+        assert not list(s.scalars(select(Job).where(Job.meeting_id == mid)))
+    client.post(endpoint, json={"action": "pause"})
+    assert client.put(f"/api/recordings/{rid}/chunks/0", content=b"saved audio", headers={"content-type": "audio/webm", "x-recording-token": active["token"]}).status_code == 200
+    assert client.post(endpoint, json={"action": "stop"}).json()["status"] == "idle"
+    assert command(client, ha)["type"] == "stop"
+    assert client.post(f"/api/recordings/{rid}/finish", json={"token": active["token"], "chunk_count": 1, "duration": 12}).status_code == 200
+    with tx() as s:
+        jobs = list(s.scalars(select(Job).where(Job.meeting_id == mid)))
+        assert len(jobs) == 1 and jobs[0].kind == "transcribe"
+        assert s.get(Recording, rid).duration == 12
+
+
 def test_unexpected_capture_end_starts_armed_backup(client):
     mid = meeting(client)
     a, ha = device(client, mid)
