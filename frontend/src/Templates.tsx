@@ -93,7 +93,7 @@ export default function Templates({ templates, reload }: { templates: Template[]
 
   return (
     <div className="stack-lg">
-      <section className="panel">
+      <section className="panel" data-setting="tpl-kinds">
         <div className="panel-head">
           <div>
             <h2>Templates</h2>
@@ -118,7 +118,7 @@ export default function Templates({ templates, reload }: { templates: Template[]
         </div>
       </section>
 
-      <section className="panel template-manager">
+      <section className="panel template-manager" data-setting="tpl-manage">
         <aside className="template-list" aria-label={kind === 'notes' ? 'Note templates' : 'AI templates'}>
           <button type="button" className="ghost new-template" onClick={create}>
             <Plus size={16} /> New {kind === 'notes' ? 'note' : 'AI'} template

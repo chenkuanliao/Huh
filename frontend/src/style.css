@@ -1829,12 +1829,37 @@ textarea.mono {
   gap: clamp(24px, 3vw, 44px);
   align-items: start;
 }
+.settings-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: sticky;
+  top: 0;
+  min-width: 0;
+}
+.settings-search {
+  background: var(--surface);
+}
+.settings-search input::-webkit-search-cancel-button {
+  display: none;
+}
+.settings-search-key {
+  font-size: 11px;
+  padding: 0 6px;
+  border-bottom-width: 1px;
+  color: var(--muted);
+  background: var(--surface-2);
+}
+.settings-search-clear {
+  width: 24px;
+  height: 24px;
+  margin-right: -4px;
+  color: var(--muted);
+}
 .settings-nav {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  position: sticky;
-  top: 0;
 }
 .settings-nav-item {
   justify-content: flex-start;
@@ -1846,14 +1871,22 @@ textarea.mono {
   gap: 11px;
   text-align: left;
   color: var(--ink-2);
+  font-weight: 400;
 }
 .settings-nav-item > svg {
   flex-shrink: 0;
+  color: var(--muted);
 }
-.settings-nav-item span {
+.settings-nav-item > span {
   display: flex;
   flex-direction: column;
+  gap: 1px;
   line-height: 1.3;
+  min-width: 0;
+}
+.settings-nav-label {
+  font-size: 13.5px;
+  letter-spacing: -0.003em;
 }
 .settings-nav-item small {
   font-weight: 400;
@@ -1862,14 +1895,124 @@ textarea.mono {
 }
 .settings-nav-item:hover {
   background: var(--surface-3);
+  color: var(--ink);
 }
 .settings-nav-item.on {
   background: var(--surface);
   color: var(--ink);
   box-shadow: var(--shadow-sm), 0 0 0 1px var(--line);
 }
+.settings-nav-item.on .settings-nav-label {
+  font-weight: 500;
+}
 .settings-nav-item.on > svg {
   color: var(--accent);
+}
+
+/* Search results replace the section list while there's a query. */
+.settings-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: calc(100dvh - 220px);
+  overflow-y: auto;
+  margin: 0 -4px;
+  padding: 0 4px 4px;
+}
+.settings-results-note,
+.settings-results-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 2px 10px 6px;
+  line-height: 1.45;
+}
+.settings-results-empty {
+  padding-top: 6px;
+}
+.settings-result {
+  justify-content: flex-start;
+  align-items: flex-start;
+  height: auto;
+  padding: 9px 10px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  gap: 10px;
+  text-align: left;
+  white-space: normal;
+  color: var(--ink-2);
+  font-weight: 400;
+}
+.settings-result.active {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+.settings-result.picked {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm), 0 0 0 1px var(--line);
+}
+.settings-result-icon {
+  display: flex;
+  padding-top: 2px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.settings-result.picked .settings-result-icon {
+  color: var(--accent);
+}
+.settings-result-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.35;
+}
+.settings-result-title {
+  font-size: 13.5px;
+  color: var(--ink);
+}
+.settings-result-desc {
+  font-size: 12px;
+  color: var(--muted);
+}
+.settings-result-where {
+  font-size: 11px;
+  color: var(--faint);
+  letter-spacing: 0.01em;
+}
+.settings-result mark {
+  background: transparent;
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+
+/* A setting jumped to from search: a highlight that lingers, then fades. */
+.setting-flash {
+  border-radius: var(--radius);
+  animation: setting-flash 2.4s ease-out;
+}
+.panel.setting-flash {
+  border-radius: var(--radius-lg);
+}
+@keyframes setting-flash {
+  0%,
+  35% {
+    box-shadow: 0 0 0 3px var(--flash), 0 0 0 4px color-mix(in srgb, var(--warn) 30%, transparent);
+    background-color: color-mix(in srgb, var(--flash) 35%, var(--surface));
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .setting-flash {
+    animation-duration: 1.6s;
+  }
 }
 .settings-content {
   min-width: 0;
@@ -3399,11 +3542,16 @@ button.source-row-item:disabled {
     grid-template-columns: 1fr;
     gap: 16px;
   }
+  .settings-side {
+    position: static;
+  }
   .settings-nav {
     flex-direction: row;
-    position: static;
     overflow-x: auto;
     scrollbar-width: none;
+  }
+  .settings-results {
+    max-height: 50dvh;
   }
   .settings-nav-item small {
     display: none;

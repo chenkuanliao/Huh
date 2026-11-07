@@ -12,16 +12,19 @@ import {
   LogOut,
   NotebookPen,
   RefreshCw,
+  Search,
   Sparkles,
   Trash2,
+  X,
   Zap,
 } from 'lucide-react';
 import { api, ChatGPTStatus, errorText, send, Settings as SettingsT, SttModels, Template } from './api';
 import { OUTPUT_LANGUAGES, PROVIDERS, ProviderInfo, providerInfo, STT_MODELS } from './providers';
 import { Badge, Callout, cx, Field, Segmented, Select, Spinner, Switch, useToast } from './ui';
 import Templates from './Templates';
+import { searchSettings, SECTION_LABELS, SettingEntry, SettingMatch, SettingsSection } from './settingsSearch';
 
-export type SettingsSection = 'ai' | 'transcription' | 'templates' | 'notes';
+export type { SettingsSection };
 
 export default function Settings({
   templates,
@@ -62,12 +65,29 @@ export default function Settings({
     [toast, onSettingsChange],
   );
 
-  const nav: { id: SettingsSection; label: string; icon: React.ReactNode; hint: string }[] = [
-    { id: 'ai', label: 'AI notes', icon: <Sparkles size={17} />, hint: 'Provider & model' },
-    { id: 'transcription', label: 'Transcription', icon: <AudioLines size={17} />, hint: 'Local speech model' },
-    { id: 'templates', label: 'Templates', icon: <LayoutTemplate size={17} />, hint: 'Notes & AI formats' },
-    { id: 'notes', label: 'Notes & navigation', icon: <NotebookPen size={17} />, hint: 'Editor, Back button, shortcuts' },
-  ];
+  // A setting picked from search: scroll to it and highlight it once its section has rendered.
+  const [target, setTarget] = useState<{ id: string; n: number } | null>(null);
+  useEffect(() => {
+    if (!target) return;
+    let timer = 0;
+    const started = performance.now();
+    const find = () => {
+      const el = document.querySelector<HTMLElement>(`[data-setting="${target.id}"]`);
+      // Wait until the section has loaded its data, or the layout shifts after we scroll.
+      if (!el || document.querySelector('.settings-content .loading-block')) {
+        if (performance.now() - started < 10000) timer = window.setTimeout(find, 50);
+        return;
+      }
+      if (el instanceof HTMLDetailsElement) el.open = true;
+      el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      el.classList.remove('setting-flash');
+      void el.offsetWidth; // restart the animation when the same result is picked twice
+      el.classList.add('setting-flash');
+      el.addEventListener('animationend', () => el.classList.remove('setting-flash'), { once: true });
+    };
+    timer = window.setTimeout(find, 0);
+    return () => window.clearTimeout(timer);
+  }, [target]);
 
   return (
     <div className="settings-page">
@@ -75,17 +95,14 @@ export default function Settings({
         <h1>Settings</h1>
       </header>
       <div className="settings-layout">
-        <nav className="settings-nav" aria-label="Settings sections">
-          {nav.map(n => (
-            <button key={n.id} type="button" aria-current={section === n.id ? 'page' : undefined} className={cx('settings-nav-item', section === n.id && 'on')} onClick={() => onSection(n.id)}>
-              {n.icon}
-              <span>
-                <strong>{n.label}</strong>
-                <small>{n.hint}</small>
-              </span>
-            </button>
-          ))}
-        </nav>
+        <SettingsSidebar
+          section={section}
+          onSection={onSection}
+          onPick={e => {
+            onSection(e.section);
+            setTarget(t => ({ id: e.id, n: (t?.n || 0) + 1 }));
+          }}
+        />
         <div className="settings-content">
           {loadError && <Callout tone="bad">{loadError}</Callout>}
           {!settings && !loadError && (
@@ -100,6 +117,170 @@ export default function Settings({
         </div>
       </div>
     </div>
+  );
+}
+
+const SECTION_ICONS: Record<SettingsSection, (size: number) => React.ReactNode> = {
+  ai: size => <Sparkles size={size} />,
+  transcription: size => <AudioLines size={size} />,
+  templates: size => <LayoutTemplate size={size} />,
+  notes: size => <NotebookPen size={size} />,
+};
+
+const NAV: { id: SettingsSection; hint: string }[] = [
+  { id: 'ai', hint: 'Provider & model' },
+  { id: 'transcription', hint: 'Local speech model' },
+  { id: 'templates', hint: 'Notes & AI formats' },
+  { id: 'notes', hint: 'Editor, Back button, shortcuts' },
+];
+
+function Mark({ text, query }: { text: string; query: string }) {
+  const tokens = query
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  if (!tokens.length) return <>{text}</>;
+  const lower = text.toLowerCase();
+  const parts: React.ReactNode[] = [];
+  let at = 0;
+  for (let i = 0; i < text.length; ) {
+    const t = tokens.find(t => lower.startsWith(t, i) && (i === 0 || !/[\p{L}\p{N}]/u.test(lower[i - 1]) || /[^\x00-\x7f]/.test(t)));
+    if (t) {
+      parts.push(text.slice(at, i), <mark key={i}>{text.slice(i, i + t.length)}</mark>);
+      i += t.length;
+      at = i;
+    } else i++;
+  }
+  parts.push(text.slice(at));
+  return <>{parts}</>;
+}
+
+function SettingsSidebar({ section, onSection, onPick }: { section: SettingsSection; onSection: (s: SettingsSection) => void; onPick: (e: SettingEntry) => void }) {
+  const input = useRef<HTMLInputElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const [picked, setPicked] = useState<string | null>(null);
+  const { results, partial } = useMemo(() => searchSettings(query), [query]);
+  const searching = !!query.trim();
+
+  useEffect(() => {
+    setActive(0);
+    setPicked(null);
+  }, [query]);
+  useEffect(() => {
+    list.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [active]);
+
+  // "/" jumps to the search box, like most settings pages.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return;
+      e.preventDefault();
+      input.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const pick = (m: SettingMatch) => {
+    setPicked(m.entry.id);
+    onPick(m.entry);
+  };
+
+  return (
+    <aside className="settings-side">
+      <label className="search settings-search">
+        <Search size={15} />
+        <input
+          ref={input}
+          type="search"
+          value={query}
+          placeholder="Search settings"
+          aria-label="Search settings"
+          aria-controls="settings-results"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={e => setQuery(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Escape' && query) {
+              e.preventDefault();
+              e.stopPropagation();
+              setQuery('');
+            } else if (!results.length) return;
+            else if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              setActive(a => (a + 1) % results.length);
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              setActive(a => (a - 1 + results.length) % results.length);
+            } else if (e.key === 'Enter') {
+              e.preventDefault();
+              pick(results[active]);
+            }
+          }}
+        />
+        {searching ? (
+          <button type="button" className="icon-button settings-search-clear" aria-label="Clear search" onClick={() => { setQuery(''); input.current?.focus(); }}>
+            <X size={14} />
+          </button>
+        ) : (
+          <kbd className="settings-search-key" aria-hidden>/</kbd>
+        )}
+      </label>
+
+      {searching ? (
+        <div className="settings-results" id="settings-results" ref={list} role="listbox" aria-label="Matching settings">
+          {!results.length ? (
+            <p className="settings-results-empty">
+              No settings match “{query.trim()}”. Try a different word, like <em>language</em>, <em>model</em> or <em>keyboard</em>.
+            </p>
+          ) : (
+            <>
+              {partial && <p className="settings-results-note">No exact match — these look related:</p>}
+              {results.map((m, i) => (
+                <button
+                  key={m.entry.id}
+                  type="button"
+                  role="option"
+                  data-index={i}
+                  aria-selected={i === active}
+                  className={cx('settings-result', i === active && 'active', picked === m.entry.id && 'picked')}
+                  onMouseMove={() => setActive(i)}
+                  onClick={() => pick(m)}
+                >
+                  <span className="settings-result-icon">{SECTION_ICONS[m.entry.section](15)}</span>
+                  <span className="settings-result-text">
+                    <span className="settings-result-title">
+                      <Mark text={m.entry.title} query={query} />
+                    </span>
+                    <span className="settings-result-desc">
+                      <Mark text={m.entry.description} query={query} />
+                    </span>
+                    <span className="settings-result-where">{SECTION_LABELS[m.entry.section]}</span>
+                  </span>
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      ) : (
+        <nav className="settings-nav" aria-label="Settings sections">
+          {NAV.map(n => (
+            <button key={n.id} type="button" aria-current={section === n.id ? 'page' : undefined} className={cx('settings-nav-item', section === n.id && 'on')} onClick={() => onSection(n.id)}>
+              {SECTION_ICONS[n.id](17)}
+              <span>
+                <span className="settings-nav-label">{SECTION_LABELS[n.id]}</span>
+                <small>{n.hint}</small>
+              </span>
+            </button>
+          ))}
+        </nav>
+      )}
+    </aside>
   );
 }
 
@@ -197,7 +378,7 @@ function AISettings({ settings, save }: { settings: SettingsT; save: Save }) {
 
   return (
     <div className="stack-lg">
-      <section className="panel">
+      <section className="panel" data-setting="ai-provider">
         <div className="panel-head">
           <div>
             <h2>Who writes your AI notes</h2>
@@ -269,7 +450,7 @@ function AISettings({ settings, save }: { settings: SettingsT; save: Save }) {
           )}
         </div>
 
-        <div className="step">
+        <div className="step" data-setting="ai-connect">
           <div className="step-label">
             <span className={cx('step-dot', isConnected && 'done')}>{isConnected ? <Check size={13} /> : 1}</span>
             Connect
@@ -281,7 +462,7 @@ function AISettings({ settings, save }: { settings: SettingsT; save: Save }) {
           </div>
         </div>
 
-        <div className={cx('step', !isConnected && 'locked')}>
+        <div className={cx('step', !isConnected && 'locked')} data-setting="ai-model">
           <div className="step-label">
             <span className={cx('step-dot', isConnected && !!modelFor(info.id) && 'done')}>{isConnected && modelFor(info.id) ? <Check size={13} /> : 2}</span>
             Choose a model
@@ -680,6 +861,7 @@ function WritingStyle({ settings, save }: { settings: SettingsT; save: Save }) {
         </div>
       </div>
       <div className="stack">
+        <div data-setting="ai-language">
         <Field label="Language of AI notes">
           <Select
             ariaLabel="Language of AI notes"
@@ -691,9 +873,12 @@ function WritingStyle({ settings, save }: { settings: SettingsT; save: Save }) {
             customLabel={q => `Use “${q}”`}
           />
         </Field>
+        </div>
+        <div data-setting="ai-instructions">
         <Field label="Extra instructions" hint="Optional. For example: “Use bullet points. Spell my lab’s name as ‘K-Lab’.”">
           <textarea rows={3} value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Anything the AI should always keep in mind…" aria-label="Extra instructions" />
         </Field>
+        </div>
         {prompt !== (settings.system_prompt || '') && (
           <div className="row">
             <button type="button" className="primary sm" onClick={() => void save({ system_prompt: prompt }, 'Instructions saved.').catch(() => {})}>
@@ -788,6 +973,7 @@ function TranscriptionSettings({ settings, save }: { settings: SettingsT; save: 
             ))}
         </div>
 
+        <div data-setting="stt-language">
         <Field label="Spoken language">
           <Segmented
             ariaLabel="Spoken language"
@@ -802,16 +988,19 @@ function TranscriptionSettings({ settings, save }: { settings: SettingsT; save: 
           />
           <p className="hint">{languageHelp[settings.stt_language]}</p>
         </Field>
+        </div>
 
+        <div data-setting="stt-traditional">
         <Switch
           checked={settings.traditional_chinese}
           onChange={v => void save({ traditional_chinese: v }).catch(() => {})}
           label="Write Chinese in Traditional characters (繁體)"
           description="Converts transcripts and AI notes. The original output is kept."
         />
+        </div>
       </section>
 
-      <section className="panel">
+      <section className="panel" data-setting="stt-model">
         <div className="panel-head">
           <div>
             <h2>Speech model</h2>
@@ -869,7 +1058,7 @@ function TranscriptionSettings({ settings, save }: { settings: SettingsT; save: 
         )}
       </section>
 
-      <details className="panel disclosure">
+      <details className="panel disclosure" data-setting="stt-advanced">
         <summary>
           <span>
             <strong>Advanced</strong>
@@ -922,7 +1111,7 @@ function NotesSettings({ settings, save }: { settings: SettingsT; save: Save }) 
   ];
   return (
     <div className="stack-lg">
-      <section className="panel">
+      <section className="panel" data-setting="notes-open">
         <div className="panel-head">
           <div>
             <h2>When a meeting opens</h2>
@@ -944,7 +1133,7 @@ function NotesSettings({ settings, save }: { settings: SettingsT; save: Save }) 
           <Segmented ariaLabel="AI notes open in" value={settings.ai_notes_view} onChange={v => void save({ ai_notes_view: v }).catch(() => {})} options={views} />
         </div>
       </section>
-      <section className="panel">
+      <section className="panel" data-setting="notes-back">
         <div className="panel-head">
           <div>
             <h2>Going back</h2>
@@ -971,7 +1160,7 @@ function NotesSettings({ settings, save }: { settings: SettingsT; save: Save }) 
           />
         </div>
       </section>
-      <section className="panel">
+      <section className="panel" data-setting="notes-keys">
         <div className="panel-head">
           <div>
             <h2>Keyboard & formatting</h2>
