@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowRight, AudioLines, ChevronDown, CircleAlert, CircleCheck, Clock, Ellipsis, FileAudio, FileText, FolderPlus, ListTodo, Mic, Plus, Sparkles, CalendarDays, Undo2, X } from 'lucide-react';
+import { ArrowRight, AudioLines, ChevronDown, CircleAlert, CircleCheck, Clock, Ellipsis, FileAudio, FileText, FolderPlus, ListTodo, Mic, Pause, Plus, Sparkles, CalendarDays, Undo2, X } from 'lucide-react';
 import { api, ApiError, errorText, Folder, Job, Meeting, send, Settings as SettingsT } from './api';
 import { stripSources, toggleTask } from './Markdown';
 import { Callout, cx, Menu, MenuItem, Spinner, useToast } from './ui';
@@ -620,7 +620,7 @@ export default function Dashboard({
   const todos = useMemo(() => collectTodos(meetings), [meetings]);
 
   const recent = meetings.slice(0, 6);
-  const active = (data?.jobs || []).filter(j => j.status === 'queued' || j.status === 'running');
+  const active = (data?.jobs || []).filter(j => j.status === 'queued' || j.status === 'running' || j.status === 'paused');
   const failed = (data?.jobs || []).filter(j => j.status === 'failed');
   const meetingsWithTodos = new Set(todos.map(t => t.meeting.id)).size;
 
@@ -695,10 +695,10 @@ export default function Dashboard({
         <section className="dash-activity" aria-label="Processing">
           {active.map(j => (
             <button key={j.id} type="button" className="activity-item" onClick={() => onOpen(j.meeting_id)}>
-              <Spinner size={15} />
+              {j.status === 'paused' ? <Pause size={15} /> : <Spinner size={15} />}
               <span className="truncate">
                 {j.kind === 'transcribe' ? 'Transcribing' : 'Writing AI notes for'} <strong>{j.meeting_title || 'Untitled meeting'}</strong>
-                {j.status === 'queued' ? ' — waiting' : j.progress ? ` — ${Math.round(j.progress * 100)}%` : '…'}
+                {j.status === 'paused' ? ' — paused' : j.status === 'queued' ? ' — waiting' : j.progress ? ` — ${Math.round(j.progress * 100)}%` : '…'}
               </span>
               <ArrowRight size={15} className="muted-icon" />
             </button>

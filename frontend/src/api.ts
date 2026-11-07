@@ -196,6 +196,8 @@ export type Settings = {
   stt_device: string;
   stt_compute_type: string;
   traditional_chinese: boolean;
+  /** After a recording finishes, transcribe and write AI notes right away (otherwise wait for a tap). */
+  auto_process: boolean;
   provider_models: Record<string, string>;
   notes_view: 'write' | 'preview';
   ai_notes_view: 'write' | 'preview';

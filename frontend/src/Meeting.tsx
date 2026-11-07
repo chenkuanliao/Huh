@@ -3,13 +3,13 @@ import Markdown, { SourceInfo } from './Markdown';
 import AudioPlayer, { clock, PlayerHandle } from './AudioPlayer';
 import FindBar from './FindBar';
 import { defaultTitle } from './format';
-import { Archive, BookA, Columns2, ListTodo, Maximize2, NotebookPen, PanelRightClose, Rows3, AudioLines, ChevronDown, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, LocateFixed, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, BookA, Pause, Play, Square, Columns2, ListTodo, Maximize2, NotebookPen, PanelRightClose, Rows3, AudioLines, ChevronDown, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, LocateFixed, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 import { api, Detail, errorText, Folder, Generation, Job, Meeting, peek, send, Template } from './api';
 import { FolderGlyph, folderVars } from './folders';
 import Editor from './Editor';
 import { noteLanguageLabel, OUTPUT_LANGUAGES } from './providers';
 import { DeviceIcon } from './Recorder';
-import { Badge, Callout, cx, Menu, MenuItem, Modal, Select, Spinner, useToast } from './ui';
+import { Badge, Callout, ConfirmDialog, cx, Menu, MenuItem, Modal, Select, Spinner, useToast } from './ui';
 
 export type Tab = 'notes' | 'enhanced' | 'transcript' | 'history';
 /** Things the command palette can ask the open meeting to do. */
@@ -166,6 +166,8 @@ export default function MeetingView({
   const [tab, setTab] = useState<Tab>(() => openingTab(detail));
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
+  /** A transcription / AI-notes job the owner asked to stop, waiting for confirmation. */
+  const [stopJob, setStopJob] = useState<Job | null>(null);
   const [focus, setFocus] = useState(false);
   const tabRef = useRef<Tab>('notes');
   tabRef.current = tab;
@@ -340,13 +342,15 @@ export default function MeetingView({
 
   const created = new Date(detail.created_at || detail.updated_at);
   const jobs = [...detail.jobs].sort((a, b) => b.created_at.localeCompare(a.created_at));
-  const active = jobs.filter(j => j.status === 'queued' || j.status === 'running');
+  const active = jobs.filter(j => j.status === 'queued' || j.status === 'running' || j.status === 'paused');
+  // Finished audio nobody has started processing (automatic processing is off, or a job was stopped).
+  const audioWaiting = detail.recordings.some(r => r.status === 'ready') && !active.some(j => j.kind === 'transcribe');
   const failed = (['transcribe', 'generate'] as const)
     .map(kind => jobs.find(j => j.kind === kind))
     .filter((j): j is Job => !!j && j.status === 'failed');
   const status = STATUS_LABEL[detail.recording_state?.status || detail.status];
   const hasTranscript = detail.transcript.length > 0;
-  const generating = active.some(j => j.kind === 'generate');
+  const generating = active.some(j => j.kind === 'generate' && j.status !== 'paused');
   const templateValue = detail.template_id && aiTemplates.some(t => t.id === detail.template_id) ? detail.template_id : defaultAi?.id || '';
 
   async function patch(body: Record<string, unknown>) {
@@ -397,6 +401,16 @@ export default function MeetingView({
       if (!quiet) toast(`Showing the AI notes from ${versionTime(g.created_at)}.`, 'success');
     } catch (e) {
       toast(errorText(e), 'error');
+    }
+  }
+
+  async function jobControl(j: Job, action: 'pause' | 'resume' | 'cancel') {
+    try {
+      await send(`/jobs/${j.id}/control`, { action });
+      await refresh();
+    } catch (e) {
+      toast(errorText(e), 'error');
+      await refresh();
     }
   }
 
@@ -655,14 +669,25 @@ export default function MeetingView({
           </div>
           )}
 
-          {(active.length > 0 || failed.length > 0) && (
+          {(active.length > 0 || failed.length > 0 || audioWaiting) && (
             <div className="job-strip">
+              {audioWaiting && (
+                <div className="job paused">
+                  <AudioLines size={15} />
+                  <span>Audio waiting to be processed</span>
+                  <span className="job-actions">
+                    <button type="button" className="ghost xs" disabled={busy} onClick={() => void transcribe()}>
+                      <Play size={13} /> Process
+                    </button>
+                  </span>
+                </div>
+              )}
               {active.map(j => (
-                <div key={j.id} className="job">
-                  <Spinner size={15} />
+                <div key={j.id} className={cx('job', j.status === 'paused' && 'paused')}>
+                  {j.status === 'paused' ? <Pause size={15} /> : <Spinner size={15} />}
                   <span>
                     {JOB_LABEL[j.kind] || j.kind}
-                    {j.status === 'queued' ? ' — waiting to start' : j.progress ? ` — ${Math.round(j.progress * 100)}%` : '…'}
+                    {j.status === 'paused' ? ' — paused' : j.status === 'queued' ? ' — waiting to start' : j.progress ? ` — ${Math.round(j.progress * 100)}%` : '…'}
                     {(() => {
                       // After a fallback, say which backup model is writing now.
                       const last = j.notices?.[j.notices.length - 1];
@@ -671,9 +696,25 @@ export default function MeetingView({
                       return last.to_label ? <span className="muted"> · using {last.to_label} ({last.from_label} {last.reason})</span> : null;
                     })()}
                   </span>
-                  {j.status === 'running' && !!j.progress && (
+                  {j.status === 'running' && !!j.progress && !phone && (
                     <span className="progress">
                       <span style={{ width: `${Math.round(j.progress * 100)}%` }} />
+                    </span>
+                  )}
+                  {(j.kind === 'transcribe' || j.kind === 'generate') && (
+                    <span className="job-actions">
+                      {j.status === 'paused' ? (
+                        <button type="button" className="ghost xs" onClick={() => void jobControl(j, 'resume')}>
+                          <Play size={13} /> Resume
+                        </button>
+                      ) : (
+                        <button type="button" className="ghost xs" onClick={() => void jobControl(j, 'pause')}>
+                          <Pause size={13} /> Pause
+                        </button>
+                      )}
+                      <button type="button" className="ghost xs" onClick={() => setStopJob(j)}>
+                        <Square size={11} fill="currentColor" /> Stop
+                      </button>
                     </span>
                   )}
                 </div>
@@ -798,6 +839,23 @@ export default function MeetingView({
           </div>
         </Modal>
       )}
+      <ConfirmDialog
+        open={!!stopJob}
+        onClose={() => setStopJob(null)}
+        icon={<Square size={18} fill="currentColor" />}
+        title={stopJob?.kind === 'transcribe' ? 'Stop transcribing?' : 'Stop writing AI notes?'}
+        description={
+          stopJob?.kind === 'transcribe'
+            ? 'The audio is kept. You can transcribe it again any time from Process or the Transcript.'
+            : 'Your notes and earlier AI versions are kept. You can generate AI notes again any time.'
+        }
+        confirmLabel="Stop"
+        onConfirm={() => {
+          const j = stopJob;
+          setStopJob(null);
+          if (j) void jobControl(j, 'cancel');
+        }}
+      />
     </div>
   );
 }

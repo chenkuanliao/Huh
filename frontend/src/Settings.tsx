@@ -1030,6 +1030,15 @@ function TranscriptionSettings({ settings, save }: { settings: SettingsT; save: 
           description="Converts transcripts and AI notes. The original output is kept."
         />
         </div>
+
+        <div data-setting="stt-auto">
+        <Switch
+          checked={settings.auto_process !== false}
+          onChange={v => void save({ auto_process: v }).catch(() => {})}
+          label="Process recordings as soon as they finish"
+          description="Transcribe and write AI notes automatically. Off: audio waits until you tap Process. You can pause or stop either step at any time."
+        />
+        </div>
       </section>
 
       <section className="panel" data-setting="stt-model">

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Archive, ArchiveRestore, ArrowLeft, AudioLines, BookA, BookOpen, Check, ChevronRight, Download, FileAudio, FileText, FolderOpen, History, LayoutDashboard, LayoutTemplate, Ellipsis, ExternalLink, FolderInput, FolderPlus, Lock, Maximize2, Mic, NotebookPen, PanelLeftClose, PanelLeftOpen, Palette, Pencil, Plus, Search, Settings as SettingsIcon, Smartphone, Sparkles, TextSearch, Trash2, X } from 'lucide-react';
-import { api, errorText, Folder, forget, GlossaryEntry, Meeting, prefetch, send, Settings as SettingsT, Template } from './api';
+import { api, ApiError, errorText, Folder, forget, GlossaryEntry, Meeting, prefetch, send, Settings as SettingsT, Template } from './api';
 import { GlossaryDialog, GlossaryLayer, mergeGlossaries } from './Glossary';
 import Recorder from './Recorder';
 import AINotices from './AINotices';
@@ -170,7 +170,7 @@ function App() {
   const narrow = useNarrow();
   const layout = usePhoneLayout();
   const phone = layout.phone;
-  usePhoneTyping(phone);
+  usePhoneTyping(phone, `${page}:${selected ?? ''}`);
   const saveState = useSaveState(phone && page === 'meeting' ? selected : null);
   usePhoneScrolled(phone, `${page}:${selected}:${folderPage}`);
   /** The phone's “New meeting” sheet (record / write / import). */
@@ -190,6 +190,9 @@ function App() {
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   const [deleting, setDeleting] = useState<Meeting | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  /** The server refused a plain delete because the meeting is still recording or receiving audio. */
+  const [forceDelete, setForceDelete] = useState(false);
+  useEffect(() => setForceDelete(false), [deleting?.id]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [folding, setFolding] = useState<Folding>(readFolding);
   const [folderDialog, setFolderDialog] = useState<{ folder: Folder | null } | null>(null);
@@ -534,7 +537,18 @@ function App() {
     if (!deleting) return;
     setDeleteBusy(true);
     try {
-      await api(`/meetings/${deleting.id}`, { method: 'DELETE' });
+      try {
+        await api(`/meetings/${deleting.id}${forceDelete ? '?force=true' : ''}`, { method: 'DELETE' });
+      } catch (e) {
+        // Still recording / finishing (or stuck that way): ask again, as a force delete.
+        if (e instanceof ApiError && e.status === 409 && !forceDelete) {
+          setForceDelete(true);
+          return;
+        }
+        throw e;
+      }
+      // Stops and drops this device's capture of the meeting, if it was recording it.
+      window.dispatchEvent(new CustomEvent('huh:meeting-deleted', { detail: deleting.id }));
       forget(`/meetings/${deleting.id}`);
       await forgetMeeting(deleting.id).catch(() => {});
       if (selected === deleting.id && page === 'meeting') leave();
@@ -1043,9 +1057,13 @@ function App() {
           open={!!deleting}
           onClose={() => setDeleting(null)}
           icon={<Trash2 size={20} />}
-          title={<>Delete “{deleting?.title || 'Untitled meeting'}”?</>}
-          description="Its notes, AI notes and their history, transcript and audio recordings will be permanently removed from the server and this device. This can’t be undone."
-          confirmLabel="Delete meeting"
+          title={forceDelete ? <>“{deleting?.title || 'Untitled meeting'}” is still recording</> : <>Delete “{deleting?.title || 'Untitled meeting'}”?</>}
+          description={
+            forceDelete
+              ? 'It’s still recording or receiving audio (or stuck finishing). Force delete stops the recording, cancels its transcription and AI notes, and permanently removes everything. This can’t be undone.'
+              : 'Its notes, AI notes and their history, transcript and audio recordings will be permanently removed from the server and this device. This can’t be undone.'
+          }
+          confirmLabel={forceDelete ? 'Force delete' : 'Delete meeting'}
           busy={deleteBusy}
           onConfirm={() => void confirmDelete()}
         />

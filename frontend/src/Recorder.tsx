@@ -20,10 +20,10 @@ import {
   Usb,
 } from 'lucide-react';
 import { api, Device, errorText, Meeting, RecordingState, send } from './api';
-import { appendChunk, bufferFile, drain, Pending, resumeFile, saveSession, sessions } from './queue';
+import { appendChunk, bufferFile, drain, forget, Pending, resumeFile, saveSession, sessions } from './queue';
 import { Badge, Callout, cx, Menu, Modal, Popover, Segmented, Select, Spinner, Switch, useToast } from './ui';
 
-type Capture = { rec: MediaRecorder; p: Pending; start: number; pausedAt?: number; pausedMs: number; chain: Promise<void>; acked: boolean; storageFailed?: boolean; viaGraph: boolean };
+type Capture = { rec: MediaRecorder; p: Pending; start: number; pausedAt?: number; pausedMs: number; chain: Promise<void>; acked: boolean; storageFailed?: boolean; viaGraph: boolean; discard?: boolean };
 
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 const isMobile = isIOS || /Android/.test(navigator.userAgent);
@@ -161,6 +161,7 @@ export default function Recorder({
   const [setupOpen, setSetupOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [controlsOpen, setControlsOpen] = useState(false);
   const [permission, setPermission] = useState<PermissionState | 'unknown'>('unknown');
 
   const stream = useRef<MediaStream | null>(null);
@@ -323,7 +324,26 @@ export default function Recorder({
     c.acked = true;
   }
 
+  /** Stops the local capture and throws its audio away (its meeting was deleted). */
+  function discard(recordingId?: string) {
+    const c = capture.current;
+    if (!c || (recordingId && c.p.id !== recordingId)) return;
+    c.discard = true;
+    if (c.rec.state !== 'inactive') c.rec.stop();
+    else {
+      capture.current = null;
+      void forget(c.p.id).then(refreshQueue).catch(() => {});
+    }
+  }
+
   async function command(cmd: any) {
+    if (cmd.type === 'discard') {
+      if (capture.current?.p.id === cmd.recording_id) {
+        discard(cmd.recording_id);
+        toast('This meeting was deleted, so its recording was stopped and discarded.');
+      }
+      return;
+    }
     if (cmd.type === 'pause' || cmd.type === 'resume') {
       const c = capture.current;
       if (!c || c.p.id !== cmd.recording_id) return;
@@ -362,7 +382,7 @@ export default function Recorder({
     const c: Capture = { rec, p, start: Date.now(), pausedMs: 0, chain: Promise.resolve(), acked: false, viaGraph };
     capture.current = c;
     rec.ondataavailable = e => {
-      if (!e.data.size) return;
+      if (!e.data.size || c.discard) return;
       c.chain = c.chain
         .then(async () => {
           await appendChunk(p, e.data);
@@ -392,6 +412,14 @@ export default function Recorder({
       setCapturing(false);
       c.chain = c.chain
         .then(async () => {
+          if (c.discard) {
+            if (capture.current === c) capture.current = null;
+            await forget(p.id).catch(() => {});
+            await wake.current?.release();
+            wake.current = null;
+            await refreshQueue();
+            return;
+          }
           if (c.storageFailed) {
             capture.current = null;
             await wake.current?.release();
@@ -557,6 +585,22 @@ export default function Recorder({
     return () => window.removeEventListener('huh:recording-setup', open);
   }, []);
 
+  // The phone's REC badge opens the recording controls from any page, even while typing.
+  useEffect(() => {
+    const open = () => setControlsOpen(true);
+    window.addEventListener('huh:recording-controls', open);
+    return () => window.removeEventListener('huh:recording-controls', open);
+  }, []);
+
+  // A meeting this device is recording was deleted here: stop and drop the capture right away.
+  useEffect(() => {
+    const onDeleted = (e: Event) => {
+      if (capture.current?.p.meeting === (e as CustomEvent<string>).detail) discard();
+    };
+    window.addEventListener('huh:meeting-deleted', onDeleted);
+    return () => window.removeEventListener('huh:meeting-deleted', onDeleted);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Allow other parts of the app to open the import dialog.
   useEffect(() => {
     const open = () => setImportOpen(true);
@@ -690,6 +734,32 @@ export default function Recorder({
   }
 
   const sourceLabel = targetDevice ? targetDevice.name : `This ${name}`;
+  const controlling = (meeting || elsewhere) && (capturing || isLive || isStarting || status === 'paused');
+  const liveActions = (after?: () => void) => (
+    <>
+      {(isLive || state?.user_paused) && !isStarting && status !== 'switching' && (
+        <button type="button" className="ghost" disabled={busy} onClick={() => void control(state?.user_paused ? 'resume' : 'pause')}>
+          {state?.user_paused ? <Play size={15} /> : <Pause size={15} />} {state?.user_paused ? 'Resume' : 'Pause'}
+        </button>
+      )}
+      {status === 'paused' && !state?.user_paused && (
+        <button type="button" className="record-button" disabled={busy || preparing} onClick={() => void control('start', target)}>Resume recording</button>
+      )}
+      <button
+        type="button"
+        className="stop-button"
+        disabled={busy}
+        onClick={() => {
+          void control('stop');
+          after?.();
+        }}
+      >
+        <Square size={13} fill="currentColor" /> Finish
+      </button>
+    </>
+  );
+  const recMeeting = recordingMeeting || meeting;
+  const recTitle = meetings.find(m => m.id === recMeeting)?.title || 'Untitled meeting';
 
   return (
     <section className={cx('recorder', isLive && 'live', status === 'paused' && 'paused')} aria-label="Recorder">
@@ -719,20 +789,8 @@ export default function Recorder({
             <ChevronDown size={14} className="muted-icon" />
           </button>
         )}
-        {(meeting || elsewhere) && (capturing || isLive || isStarting || status === 'paused') ? (
-          <>
-            {(isLive || state?.user_paused) && !isStarting && status !== 'switching' && (
-              <button type="button" className="ghost" disabled={busy} onClick={() => void control(state?.user_paused ? 'resume' : 'pause')}>
-                {state?.user_paused ? <Play size={15} /> : <Pause size={15} />} {state?.user_paused ? 'Resume' : 'Pause'}
-              </button>
-            )}
-            {status === 'paused' && !state?.user_paused && (
-              <button type="button" className="record-button" disabled={busy || preparing} onClick={() => void control('start', target)}>Resume recording</button>
-            )}
-            <button type="button" className="stop-button" disabled={busy} onClick={() => void control('stop')}>
-              <Square size={13} fill="currentColor" /> Finish
-            </button>
-          </>
+        {controlling ? (
+          liveActions()
         ) : meeting && (
           <button type="button" className="record-button" disabled={busy || preparing || (targetDevice ? !targetDevice.ready || !targetDevice.online : false)} onClick={() => void control('start', target)}>
             {busy || preparing ? <Spinner size={15} /> : <span className="rec-dot static" />} Start recording
@@ -973,6 +1031,26 @@ export default function Recorder({
       </Popover>
 
       <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} meeting={meeting} onDone={() => onChange()} refreshQueue={refreshQueue} />
+
+      <Modal open={controlsOpen && !!controlling} onClose={() => setControlsOpen(false)} title={headline}>
+        <div className="rec-controls">
+          {recMeeting && recMeeting !== meeting ? (
+            <button
+              type="button"
+              className="link rec-controls-meeting"
+              onClick={() => {
+                setControlsOpen(false);
+                onOpenMeeting(recMeeting);
+              }}
+            >
+              {recTitle} →
+            </button>
+          ) : (
+            <p className="muted rec-controls-meeting truncate">{recTitle}</p>
+          )}
+          <div className="rec-controls-actions">{liveActions(() => setControlsOpen(false))}</div>
+        </div>
+      </Modal>
     </section>
   );
 }

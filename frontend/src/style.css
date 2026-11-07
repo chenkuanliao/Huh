@@ -6953,9 +6953,15 @@ body.phone .phone-app .workspace {
 }
 .phone-rec-badge {
   display: none;
+  flex-shrink: 0;
   align-items: center;
   gap: 6px;
-  padding: 0 10px;
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 17px;
+  background: var(--rec-soft);
+  box-shadow: none;
   color: var(--rec);
   font-size: 13px;
   font-weight: 700;
@@ -7321,4 +7327,45 @@ body.phone .ai-order-grip {
   .sk {
     animation: none;
   }
+}
+
+/* Recording controls sheet (from the phone's REC badge). */
+.rec-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.rec-controls-meeting {
+  align-self: flex-start;
+  max-width: 100%;
+  margin: 0;
+  font-size: 15px;
+}
+.rec-controls-actions {
+  display: flex;
+  gap: 10px;
+}
+.rec-controls-actions > button {
+  flex: 1;
+  justify-content: center;
+  height: 48px;
+  border-radius: 24px;
+  font-size: 16px;
+}
+.rec-controls .elapsed {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+}
+/* Pipeline controls on a job row (pause / resume / stop). */
+.job .job-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.job.paused {
+  color: var(--muted);
+}
+body.phone .job .job-actions .ghost {
+  min-height: 36px;
 }

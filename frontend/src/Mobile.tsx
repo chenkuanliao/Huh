@@ -187,9 +187,10 @@ export function PhoneTopBar({
             <span className="rec-dot static" />
             <span className="phone-record-label">Record</span>
           </button>
-          <span className="phone-rec-badge" aria-live="polite">
+          {/* Recording controls (pause / finish) from anywhere, even while typing. */}
+          <button type="button" className="phone-rec-badge" aria-label="Recording controls" onPointerDown={e => e.preventDefault()} onClick={() => window.dispatchEvent(new Event('huh:recording-controls'))}>
             <span className="rec-dot" /> REC
-          </span>
+          </button>
         </>
       )}
       {onRecord && (
@@ -616,13 +617,17 @@ export function PhoneSettingsFooter({ onDesktop, onLock }: { onDesktop: () => vo
   );
 }
 
-/** Adds body.phone-typing while a note's text box has focus, so everything but the note can step aside. */
-export function usePhoneTyping(active: boolean) {
+const isNoteEditor = (t: EventTarget | null) => t instanceof HTMLTextAreaElement && t.classList.contains('note-editor');
+
+/** Adds body.phone-typing while a note's text box has focus, so everything but the note can step aside.
+ *  Browsers send no blur when a focused box is removed (leaving the meeting mid-typing), so the class is
+ *  also re-checked whenever the page changes (`routeKey`) — otherwise the recorder bar and top-bar
+ *  buttons would stay hidden everywhere. */
+export function usePhoneTyping(active: boolean, routeKey: string) {
   useEffect(() => {
     if (!active) return;
-    const isNote = (t: EventTarget | null) => t instanceof HTMLTextAreaElement && t.classList.contains('note-editor');
-    const on = (e: FocusEvent) => isNote(e.target) && document.body.classList.add('phone-typing');
-    const off = (e: FocusEvent) => isNote(e.target) && document.body.classList.remove('phone-typing');
+    const on = (e: FocusEvent) => isNoteEditor(e.target) && document.body.classList.add('phone-typing');
+    const off = (e: FocusEvent) => isNoteEditor(e.target) && !isNoteEditor(e.relatedTarget) && document.body.classList.remove('phone-typing');
     document.addEventListener('focusin', on);
     document.addEventListener('focusout', off);
     return () => {
@@ -631,6 +636,14 @@ export function usePhoneTyping(active: boolean) {
       document.body.classList.remove('phone-typing');
     };
   }, [active]);
+  useEffect(() => {
+    if (!active) return;
+    const sync = () => document.body.classList.toggle('phone-typing', isNoteEditor(document.activeElement) && document.activeElement!.isConnected);
+    sync();
+    // The old page's text box may unmount a frame later (route transitions); check once more.
+    const raf = requestAnimationFrame(sync);
+    return () => cancelAnimationFrame(raf);
+  }, [active, routeKey]);
 }
 
 export type SaveState = { status: string; tone: 'good' | 'pending' | 'bad' };

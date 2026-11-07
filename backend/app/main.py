@@ -452,7 +452,7 @@ def dashboard():
                 select(Job)
                 .where(
                     Job.kind.in_(["transcribe", "generate"]),
-                    Job.status.in_(["queued", "running"])
+                    Job.status.in_(["queued", "running", "paused"])
                     | ((Job.status == "failed") & (Job.created_at > now() - 86400 * 3)),
                 )
                 .order_by(Job.created_at.desc())
@@ -562,12 +562,15 @@ def edit_meeting(mid: str, body: dict):
 
 
 @app.delete("/api/meetings/{mid}")
-def delete_meeting(mid: str):
+def delete_meeting(mid: str, force: bool = False):
+    """Deletes a meeting and everything in it. While audio is still being captured or finished,
+    this refuses unless force=true: forcing drops the capture and stops any transcription or AI
+    work for the meeting (the worker notices its job is gone and stops)."""
     with tx() as s:
         m = require(s, Meeting, mid)
         rs = recordings(s, mid)
-        if any(r.status in ["starting", "recording", "stopping"] for r in rs):
-            fail("Stop and finish capture before deleting")
+        if not force and any(r.status in ["starting", "recording", "stopping", "uploading"] for r in rs):
+            fail("This meeting is still recording or receiving audio")
         for cls in [Chunk, Segment]:
             s.execute(delete(cls).where(cls.recording_id.in_([r.id for r in rs])))
         for cls in [Recording, Generation, Job]:
@@ -654,6 +657,26 @@ def generate_meeting(mid: str, body: dict):
         return public(generate(s, require(s, Meeting, mid), body.get("template_id"), language or None))
 
 
+@app.post("/api/jobs/{jid}/control")
+def control_job(jid: str, body: dict):
+    """Pause, resume or cancel transcription / AI-notes work."""
+    action = body.get("action")
+    with tx() as s:
+        j = require(s, Job, jid)
+        if j.kind not in ["transcribe", "generate"]:
+            fail("This work can't be controlled", 422)
+        if action == "pause":
+            pause_job(s, j)
+        elif action == "resume":
+            resume_job(s, j)
+        elif action == "cancel":
+            cancel_job(s, j)
+        else:
+            fail("Invalid job action", 422)
+        s.flush()
+        return public(j)
+
+
 @app.post("/api/meetings/{mid}/transcribe")
 def transcribe_meeting(mid: str):
     with tx() as s:
@@ -702,8 +725,11 @@ def heartbeat(body: dict):
     ready = boolean(body.get("ready"), "ready")
     backup = boolean(body.get("backup_enabled"), "backup_enabled")
     with tx() as s:
-        if mid:
-            require(s, Meeting, mid)
+        # The meeting (or the recording this device is capturing) may have been force-deleted.
+        if mid and not s.get(Meeting, mid):
+            mid = None
+        rid = body.get("recording_id")
+        gone = bool(rid) and isinstance(rid, str) and not s.get(Recording, rid)
         d = s.get(Device, id)
         if not d:
             d = Device(id=id, name="")
@@ -725,8 +751,11 @@ def heartbeat(body: dict):
         d.backup_enabled = backup
         d.last_seen = now()
         d.capture_state = string(body.get("capture_state", "idle"), "capture_state", 50)
-        d.recording_id = body.get("recording_id")
+        d.recording_id = None if gone else rid
         s.flush()
+        if gone:
+            # Tell the device to drop the capture: its meeting was deleted.
+            return {"device": public(d), "command": dict(type="discard", meeting_id=body.get("meeting_id"), recording_id=rid)}
         if mid:
             monitor(s, require(s, Meeting, mid))
         command = None
@@ -973,7 +1002,7 @@ def finish(rid: str, body: dict):
         m.state = st
         m.status = st["status"]
         monitor(s, m)
-        if not m.state.get("user_paused"):
+        if not m.state.get("user_paused") and settings(s)["auto_process"]:
             transcribe(s, r)
         result = public(r)
     remove_pieces(DATA / "recordings" / rid)
@@ -1093,7 +1122,7 @@ def write_settings(body: dict):
             if k in body:
                 v[k] = (
                     boolean(body[k], k)
-                    if k == "traditional_chinese"
+                    if k in ("traditional_chinese", "auto_process")
                     else string(body[k], k, 20000 if k == "system_prompt" else 1000)
                 )
         if v["provider"] not in PROVIDERS:

@@ -18,6 +18,8 @@ DEFAULTS = dict(
     stt_device="cuda",
     stt_compute_type="float16",
     traditional_chinese=True,
+    # After a recording finishes: transcribe and write AI notes right away (True), or wait for the owner (False).
+    auto_process=True,
     provider_models={},
     notes_view="write",
     ai_notes_view="preview",
@@ -183,21 +185,66 @@ def enqueue(s, kind, mid=None, payload=None):
     return j
 
 
+JOB_ACTIVE = ["queued", "running", "paused"]
+
+
 def transcribe(s, r):
     jobs = list(
         s.scalars(
             select(Job).where(
                 Job.kind == "transcribe",
                 Job.meeting_id == r.meeting_id,
-                Job.status.in_(["queued", "running"]),
+                Job.status.in_(JOB_ACTIVE),
             )
         )
     )
     for j in jobs:
         if j.payload.get("recording_id") == r.id:
+            if j.status == "paused":
+                # Asking to transcribe a paused recording resumes its job instead of starting another.
+                resume_job(s, j)
             return j
     r.status = "queued"
     return enqueue(s, "transcribe", r.meeting_id, {"recording_id": r.id})
+
+
+def pause_job(s, j):
+    """Pauses a queued or running job. A running worker notices at its next checkpoint and stops;
+    the job keeps its checkpoints (AI steps already done) for when it resumes."""
+    if j.status not in ["queued", "running"]:
+        fail("Only waiting or running work can be paused")
+    j.status = "paused"
+    j.lease = 0
+    if j.kind == "transcribe":
+        r = s.get(Recording, (j.payload or {}).get("recording_id"))
+        if r and r.status == "queued":
+            r.status = "ready"
+
+
+def resume_job(s, j):
+    if j.status != "paused":
+        fail("Only paused work can be resumed")
+    j.status = "queued"
+    j.available = now()
+    j.attempts = 0
+    j.error = None
+    if j.kind == "transcribe":
+        r = s.get(Recording, (j.payload or {}).get("recording_id"))
+        if r and r.status in ["ready", "error"]:
+            r.status = "queued"
+
+
+def cancel_job(s, j):
+    """Stops a job for good. Audio and transcripts are kept; the work can be started again later."""
+    if j.status not in JOB_ACTIVE:
+        fail("This work has already finished")
+    j.status = "cancelled"
+    j.lease = 0
+    j.error = None
+    if j.kind == "transcribe":
+        r = s.get(Recording, (j.payload or {}).get("recording_id"))
+        if r and r.status == "queued":
+            r.status = "ready"
 
 
 def generate(s, m, template_id=None, output_language=None):
@@ -248,6 +295,11 @@ def generate(s, m, template_id=None, output_language=None):
             for x in segs
         ],
     }
+    # A new run replaces AI-notes work the owner had paused for this meeting.
+    for old in s.scalars(
+        select(Job).where(Job.kind == "generate", Job.meeting_id == m.id, Job.status == "paused")
+    ):
+        old.status = "cancelled"
     return enqueue(s, "generate", m.id, payload)
 
 
@@ -315,7 +367,7 @@ def stop(s, m):
     for r in recordings(s, m.id):
         if r.status in ["starting", "recording"]:
             r.status = "stopping"
-        elif r.status == "ready" and r.device_id:
+        elif r.status == "ready" and r.device_id and settings(s)["auto_process"]:
             transcribe(s, r)
     state = dict(m.state)
     state.update(
