@@ -13,6 +13,7 @@
   --accent: #2f6a4f;
   --accent-hover: #255a42;
   --accent-soft: #e3eee7;
+  --flash: #fbe7a6;
   --accent-ink: #ffffff;
   --good: #2f7a52;
   --good-soft: #e2f1e8;
@@ -2688,11 +2689,33 @@ kbd {
   border-top: 0;
   padding-top: 0;
 }
-.todo-list li.ticking {
-  opacity: 0.45;
+.todo-list li.done .task-box {
+  animation: task-pop 0.28s cubic-bezier(0.3, 1.6, 0.5, 1);
 }
-.todo-list li.ticking .todo-text > span {
-  text-decoration: line-through;
+.todo-list li.done .task-box:disabled {
+  cursor: default;
+}
+@keyframes task-pop {
+  50% {
+    transform: scale(1.22);
+  }
+}
+/* Strike-through that sweeps across the text once ticked. The inline inner span gets its own
+   line box per wrapped line (box-decoration-break: clone), so every line is struck through. */
+.todo-label {
+  transition: color 0.35s;
+}
+.todo-label > span {
+  background: linear-gradient(currentColor, currentColor) no-repeat 0 58% / 0 1.5px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background-size 0.35s ease-out;
+}
+.todo-list li.done .todo-label {
+  color: var(--muted);
+}
+.todo-list li.done .todo-label > span {
+  background-size: 100% 1.5px;
 }
 .task-box.inline {
   position: static;
@@ -2705,19 +2728,196 @@ kbd {
 }
 .todo-text {
   display: flex;
+  flex: 1;
   flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
   gap: 1px;
   min-width: 0;
+  height: auto;
+  margin: -3px -6px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: normal;
   overflow-wrap: anywhere;
+  transition: background 0.12s;
+  cursor: pointer;
+}
+.todo-text:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.todo-text:disabled,
+.todo-text:disabled:hover {
+  cursor: default;
+  opacity: 1;
+  background: none;
 }
 .todo-source {
-  align-self: flex-start;
   font-size: 12px;
   font-weight: 500;
   color: var(--muted);
 }
-.todo-source:hover {
+.todo-text:hover:not(:disabled) .todo-source {
   color: var(--accent);
+}
+
+/* A restored to-do (Undo) slides back in with a brief tint. */
+.todo-list li.restored {
+  animation: restored 1.6s ease-out;
+}
+@keyframes restored {
+  0%,
+  30% {
+    background: var(--accent-soft);
+    box-shadow: -8px 0 0 var(--accent-soft), 8px 0 0 var(--accent-soft);
+  }
+}
+
+/* Undo bar for ticked to-dos: dark like toasts, bottom centre, with a timer that drains. */
+.undo-bar {
+  position: fixed;
+  z-index: 85;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 9px 8px 9px 14px;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: #232824;
+  color: #f3f2ec;
+  box-shadow: var(--shadow-lg);
+  font-size: 13.5px;
+  animation: undo-in 0.22s cubic-bezier(0.2, 0, 0, 1);
+}
+/* Sit above the recording bar when it's showing. */
+body:has(.recorder) .undo-bar {
+  bottom: 92px;
+}
+@keyframes undo-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 10px);
+  }
+}
+.undo-icon {
+  flex-shrink: 0;
+  color: #7fd3a1;
+}
+.undo-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.undo-what {
+  color: #b9bbb2;
+}
+.undo-bar .undo-button {
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: none;
+  color: #fff;
+}
+.undo-bar .undo-button:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.undo-button kbd {
+  margin-left: 2px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #d6d7d0;
+  font: inherit;
+  font-size: 11.5px;
+}
+.undo-bar .icon-button {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  color: #b9bbb2;
+}
+.undo-bar .icon-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.undo-timer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: #7fd3a1;
+  transform-origin: left;
+  animation: undo-drain linear forwards;
+}
+@keyframes undo-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* Jumping to a line in a note: a highlight that lingers, then fades out. */
+.markdown li.line-flash {
+  border-radius: 6px;
+  animation: line-flash 2.4s ease-out;
+}
+@keyframes line-flash {
+  0%,
+  35% {
+    background: var(--flash);
+    box-shadow: 0 0 0 4px var(--flash);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+.editor {
+  position: relative;
+}
+.line-flash-box {
+  position: absolute;
+  overflow: hidden;
+  border-radius: var(--radius);
+  pointer-events: none;
+}
+.line-flash-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: var(--flash);
+  mix-blend-mode: multiply;
+  opacity: 0;
+  animation: line-band 2.4s ease-out;
+}
+@keyframes line-band {
+  0% {
+    opacity: 0;
+  }
+  8%,
+  35% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 
 /* ============================================================ focus mode */
@@ -2936,7 +3136,7 @@ body.focus-active .app {
 @keyframes flash {
   0%,
   30% {
-    background: #fbe7a6;
+    background: var(--flash);
   }
 }
 

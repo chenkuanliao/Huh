@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowRight, AudioLines, CircleAlert, Clock, FileAudio, ListTodo, Mic, Plus, Sparkles, CalendarDays } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { ArrowRight, CircleCheck, Undo2, X, AudioLines, CircleAlert, Clock, FileAudio, ListTodo, Mic, Plus, Sparkles, CalendarDays } from 'lucide-react';
 import { api, ApiError, errorText, Job, Meeting, send, Settings as SettingsT } from './api';
 import { stripSources, toggleTask } from './Markdown';
 import { Callout, cx, Spinner, useToast } from './ui';
@@ -7,7 +8,22 @@ import { Callout, cx, Spinner, useToast } from './ui';
 type MeetingStats = { recorded_seconds: number; recordings: number; segments: number; generations: number };
 type DashJob = Job & { meeting_id: string; meeting_title: string | null };
 type DashData = { meetings: Record<string, MeetingStats>; jobs: DashJob[] };
-type Todo = { meeting: Meeting; field: 'notes' | 'enhanced_notes'; line: number; text: string; key: string };
+type Field = 'notes' | 'enhanced_notes';
+type Todo = { meeting: Meeting; field: Field; line: number; raw: string; text: string; key: string };
+
+/** A tick that can still be taken back with Undo or Ctrl/⌘ + Z. */
+type Done = { id: number; todo: Todo; saved: Promise<void>; undone: boolean; anim?: Animation };
+
+const UNDO_MS = 10_000;
+const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+/** Where Ctrl/⌘ + Z belongs to something else: text fields, editors, and open dialogs. */
+function undoBelongsElsewhere(target: EventTarget | null) {
+  const el = target instanceof HTMLElement ? target : null;
+  if (el?.isContentEditable || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return true;
+  if (el instanceof HTMLInputElement && !['checkbox', 'radio', 'button', 'submit', 'reset'].includes(el.type)) return true;
+  return !!document.querySelector('[role="dialog"], [aria-modal="true"]') || document.body.classList.contains('focus-active');
+}
 
 const OPEN_TASK = /^(?:\s*>)*\s*(?:[-*+]|\d+[.)])\s+\[ \]\s+(.+)$/;
 
@@ -50,6 +66,7 @@ function delta(now: number, before: number, unit = '') {
 export default function Dashboard({
   meetings,
   onOpen,
+  onReveal,
   onNew,
   onImport,
   onSettings,
@@ -58,6 +75,8 @@ export default function Dashboard({
 }: {
   meetings: Meeting[];
   onOpen: (id: string) => void;
+  /** Open a meeting's note at a source line and highlight it. */
+  onReveal: (id: string, field: Field, line: number, lineText: string) => void;
   onNew: () => void;
   onImport: () => void;
   onSettings: (section: 'ai' | 'transcription') => void;
@@ -67,7 +86,18 @@ export default function Dashboard({
   const toast = useToast();
   const [data, setData] = useState<DashData | null>(null);
   const [settings, setSettings] = useState<SettingsT | null>(null);
-  const [ticking, setTicking] = useState<string | null>(null);
+  // Ticked to-dos stay on screen checked for a beat, then fade and collapse before the list refreshes.
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [gone, setGone] = useState<Set<string>>(new Set());
+  const rows = useRef(new Map<string, HTMLLIElement>());
+  const latest = useRef(new Map<string, Meeting>());
+  const chain = useRef<Promise<unknown>>(Promise.resolve());
+  // Most recent last. Each tick stays undoable for UNDO_MS; leaving Home drops them all.
+  const [undos, setUndos] = useState<Done[]>([]);
+  const undosRef = useRef(undos);
+  undosRef.current = undos;
+  const nextId = useRef(1);
+  const returning = useRef(new Set<string>());
   const [showAll, setShowAll] = useState(false);
 
   const load = useCallback(async () => {
@@ -120,7 +150,7 @@ export default function Dashboard({
       const field = (m.enhanced_notes || '').trim() ? 'enhanced_notes' : 'notes';
       (m[field] || '').split('\n').forEach((l, i) => {
         const match = l.match(OPEN_TASK);
-        if (match) out.push({ meeting: m, field, line: i + 1, text: stripSources(match[1]).replace(/[*_`]/g, '').trim(), key: `${m.id}:${field}:${i}` });
+        if (match) out.push({ meeting: m, field, line: i + 1, raw: l, text: stripSources(match[1]).replace(/[*_`]/g, '').trim(), key: `${m.id}:${field}:${i}` });
       });
     }
     return out;
@@ -131,23 +161,141 @@ export default function Dashboard({
   const failed = (data?.jobs || []).filter(j => j.status === 'failed');
   const meetingsWithTodos = new Set(todos.map(t => t.meeting.id)).size;
 
-  async function tick(t: Todo) {
-    setTicking(t.key);
-    const revision = t.field === 'notes' ? 'notes_revision' : 'enhanced_revision';
-    try {
-      await send(`/meetings/${t.meeting.id}`, { [t.field]: toggleTask(t.meeting[t.field], t.line), [revision]: t.meeting[revision] }, 'PATCH');
-      await reloadMeetings();
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        toast('That note just changed on another device. The list has been refreshed.', 'error');
-        await reloadMeetings();
-      } else toast(errorText(e), 'error');
-    } finally {
-      setTicking(null);
-    }
+  // Forget animation state for to-dos that have left the list (or come back after being unticked elsewhere).
+  useEffect(() => {
+    const keys = new Set(todos.map(t => t.key));
+    const prune = (set: Set<string>) => ([...set].every(k => keys.has(k)) ? set : new Set([...set].filter(k => keys.has(k))));
+    setChecked(prune);
+    setGone(prune);
+  }, [todos]);
+
+  /** Save one tick. Ticks run one at a time, each on top of the newest copy of its meeting. */
+  function save(t: Todo, undo = false) {
+    // Ticking finds the open line; undoing finds the same line ticked.
+    const from = undo ? toggleTask(t.raw, 1) : t.raw;
+    const run = async () => {
+      const cached = latest.current.get(t.meeting.id);
+      const revision = t.field === 'notes' ? 'notes_revision' : 'enhanced_revision';
+      const m = cached && cached[revision] >= t.meeting[revision] ? cached : t.meeting;
+      const lines = m[t.field].split('\n');
+      let line = t.line;
+      if (lines[line - 1] !== from) line = lines.indexOf(from) + 1;
+      if (!line) return; // Already done or edited elsewhere; the refresh will settle it.
+      const updated = await send<Meeting>(`/meetings/${m.id}`, { [t.field]: toggleTask(m[t.field], line), [revision]: m[revision] }, 'PATCH');
+      latest.current.set(m.id, updated);
+    };
+    const next = chain.current.then(run, run);
+    chain.current = next.catch(() => {});
+    return next;
   }
 
-  const visibleTodos = showAll ? todos : todos.slice(0, 7);
+  function collapse(entry: Done) {
+    const el = rows.current.get(entry.todo.key);
+    if (!el) return Promise.resolve();
+    const cs = getComputedStyle(el);
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const from = { height: `${el.offsetHeight}px`, paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom, opacity: 1, transform: 'none' };
+    const faded = { ...from, opacity: 0, transform: 'translateX(14px)', offset: 0.5 };
+    const to = { height: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0, transform: 'translateX(14px)' };
+    el.style.overflow = 'hidden';
+    const anim = (entry.anim = el.animate([from, faded, to], { duration: still ? 1 : 620, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' }));
+    // Hidden tabs pause animations; never let that hold the list hostage.
+    return Promise.race([anim.finished.then(() => {}, () => {}), new Promise<void>(r => setTimeout(r, 900))]);
+  }
+
+  const forget = (entry: Done) => setUndos(list => list.filter(x => x !== entry));
+
+  async function tick(t: Todo) {
+    if (checked.has(t.key)) return;
+    setChecked(s => new Set(s).add(t.key));
+    const beat = new Promise(r => setTimeout(r, 700));
+    const saved = save(t);
+    const entry: Done = { id: nextId.current++, todo: t, saved, undone: false };
+    setUndos(list => [...list, entry]);
+    setTimeout(() => forget(entry), UNDO_MS);
+    try {
+      await saved;
+    } catch (e) {
+      forget(entry);
+      setChecked(s => {
+        const next = new Set(s);
+        next.delete(t.key);
+        return next;
+      });
+      if (e instanceof ApiError && e.status === 409) toast('That note just changed on another device. The list has been refreshed.', 'error');
+      else toast(errorText(e), 'error');
+      await reloadMeetings().catch(() => {});
+      return;
+    }
+    await beat;
+    if (entry.undone) return;
+    await collapse(entry);
+    if (entry.undone) return;
+    setGone(s => new Set(s).add(t.key));
+    await reloadMeetings().catch(() => {});
+  }
+
+  /** Put a ticked to-do back: untick it in the note and bring the row back where it was. */
+  async function undo(entry: Done) {
+    if (entry.undone) return;
+    entry.undone = true;
+    forget(entry);
+    const t = entry.todo;
+    try {
+      await entry.saved;
+    } catch {
+      return; // The tick never saved, and tick() has already put the row back.
+    }
+    try {
+      await save(t, true);
+    } catch (e) {
+      toast(e instanceof ApiError && e.status === 409 ? 'That note just changed on another device, so the to-do couldn’t be restored.' : errorText(e), 'error');
+      return;
+    }
+    entry.anim?.cancel();
+    const el = rows.current.get(t.key);
+    if (el) el.style.overflow = '';
+    // Rows already gone from the list animate back in when they remount.
+    if (!el || gone.has(t.key)) returning.current.add(t.key);
+    const drop = (set: Set<string>) => {
+      const next = new Set(set);
+      next.delete(t.key);
+      return next;
+    };
+    setChecked(drop);
+    setGone(drop);
+    await reloadMeetings().catch(() => {});
+  }
+
+  function rowRef(key: string, el: HTMLLIElement | null) {
+    if (!el) return void rows.current.delete(key);
+    rows.current.set(key, el);
+    if (!returning.current.delete(key)) return;
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const cs = getComputedStyle(el);
+    const end = { height: `${el.offsetHeight}px`, paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom, opacity: 1 };
+    el.style.overflow = 'hidden';
+    const anim = el.animate([{ height: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0 }, end], { duration: still ? 1 : 380, easing: 'cubic-bezier(0.2, 0, 0, 1)' });
+    anim.finished.then(() => void (el.style.overflow = ''), () => {});
+    el.classList.add('restored');
+    el.addEventListener('animationend', () => el.classList.remove('restored'), { once: true });
+  }
+
+  // Ctrl/⌘ + Z undoes the latest tick, but only while its Undo bar is up and nothing else owns undo.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.code !== 'KeyZ' || e.defaultPrevented) return;
+      const last = undosRef.current[undosRef.current.length - 1];
+      if (!last || undoBelongsElsewhere(e.target)) return;
+      e.preventDefault();
+      void undo(last);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }); // Re-bound each render so undo() sees current state.
+
+  const shown = todos.filter(t => !gone.has(t.key));
+  const visibleTodos = showAll ? shown : shown.slice(0, 7);
 
   return (
     <div className="dashboard">
@@ -297,35 +445,72 @@ export default function Dashboard({
             <div>
               <h2>Open to-dos</h2>
               <p className="muted">
-                From each meeting’s AI notes, or your own notes when it has none. Tick to complete.
+                From each meeting’s AI notes, or your own notes when it has none. Tick to complete, or click one to see it in its note.
               </p>
             </div>
           </div>
-          {todos.length === 0 ? (
+          {shown.length === 0 ? (
             <p className="hint">Nothing open. Add a checkbox in any note with “- [ ] ”.</p>
           ) : (
             <ul className="todo-list">
-              {visibleTodos.map(t => (
-                <li key={t.key} className={cx(ticking === t.key && 'ticking')}>
-                  <input type="checkbox" className="task-box inline" aria-label={`Complete: ${t.text}`} checked={ticking === t.key} disabled={!!ticking} onChange={() => void tick(t)} />
-                  <span className="todo-text">
-                    <span>{t.text}</span>
-                    <button type="button" className="link small todo-source" onClick={() => onOpen(t.meeting.id)}>
-                      {t.meeting.title || 'Untitled meeting'}
-                      {t.field === 'enhanced_notes' ? ' · AI notes' : ''}
+              {visibleTodos.map(t => {
+                const done = checked.has(t.key);
+                return (
+                  <li
+                    key={t.key}
+                    ref={el => rowRef(t.key, el)}
+                    className={cx(done && 'done')}
+                  >
+                    <input type="checkbox" className="task-box inline" aria-label={`Complete: ${t.text}`} checked={done} disabled={done} onChange={() => void tick(t)} />
+                    <button
+                      type="button"
+                      className="todo-text"
+                      title="Show in the note"
+                      disabled={done}
+                      onClick={() => onReveal(t.meeting.id, t.field, t.line, t.raw)}
+                    >
+                      <span className="todo-label">
+                        <span>{t.text}</span>
+                      </span>
+                      <span className="todo-source">
+                        {t.meeting.title || 'Untitled meeting'}
+                        {t.field === 'enhanced_notes' ? ' · AI notes' : ''}
+                      </span>
                     </button>
-                  </span>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
-          {todos.length > 7 && (
+          {shown.length > 7 && (
             <button type="button" className="ghost sm" onClick={() => setShowAll(v => !v)}>
-              {showAll ? 'Show fewer' : `Show all ${todos.length}`}
+              {showAll ? 'Show fewer' : `Show all ${shown.length}`}
             </button>
           )}
         </section>
       </div>
+      {undos.length > 0 &&
+        createPortal(
+          (() => {
+            const last = undos[undos.length - 1];
+            return (
+              <div className="undo-bar" role="status" key={last.id}>
+                <CircleCheck size={17} className="undo-icon" />
+                <span className="undo-text">
+                  {undos.length > 1 ? `${undos.length} to-dos completed` : 'Completed'} <span className="undo-what">“{last.todo.text}”</span>
+                </span>
+                <button type="button" className="undo-button" onClick={() => void undo(last)}>
+                  <Undo2 size={15} /> Undo <kbd>{isMac ? '⌘Z' : 'Ctrl+Z'}</kbd>
+                </button>
+                <button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setUndos([])}>
+                  <X size={15} />
+                </button>
+                <span className="undo-timer" style={{ animationDuration: `${UNDO_MS}ms` }} />
+              </div>
+            );
+          })(),
+          document.body,
+        )}
     </div>
   );
 }

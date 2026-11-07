@@ -649,6 +649,10 @@ function App() {
               meetings={active}
               creating={creating}
               onOpen={open}
+              onReveal={(id, field, line, lineText) => {
+                open(id);
+                setRequest({ meetingId: id, tab: field === 'notes' ? 'notes' : 'enhanced', line, lineText, n: Date.now() });
+              }}
               onNew={() => void newMeeting()}
               onImport={() => void newMeeting(undefined, true)}
               onSettings={s => openSettings(s)}
