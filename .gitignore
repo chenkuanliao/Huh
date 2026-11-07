@@ -1,0 +1,49 @@
+# ---- Secrets & machine-specific configuration (never commit) ----
+.env
+.env.*
+!.env.example
+# Generated per host by scripts/configure-host-gpu.py (driver paths/versions)
+compose.host-gpu.yaml
+*.pem
+*.key
+secret.key
+
+# ---- Personal data & local test artifacts ----
+# Test audio, generated QA passwords, build/test logs
+.artifacts/
+.local/
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+playwright-report/
+test-results/
+
+# ---- Local working notes and personal agent instructions ----
+AGENTS.md
+CLAUDE.md
+.claude/
+HANDOFF.md
+VALIDATION.md
+**/IMPLEMENTATION.md
+
+# ---- Dependencies & build output ----
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ---- Editors & OS ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

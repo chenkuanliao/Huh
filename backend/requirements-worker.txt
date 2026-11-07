@@ -1,0 +1,6 @@
+-r requirements.txt
+faster-whisper==1.2.1
+opencc-python-reimplemented>=0.1.7
+huggingface-hub>=0.28,<1
+# faster-whisper 1.2.1 decode_audio uses metadata_errors removed in PyAV 19.
+av==15.1.0

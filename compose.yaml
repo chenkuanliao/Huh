@@ -1,0 +1,69 @@
+name: huh
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: huh
+      POSTGRES_USER: huh
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-huh-local-database}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U huh -d huh']
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment: &app-environment
+      DATABASE_URL: postgresql+psycopg://huh:${POSTGRES_PASSWORD:-huh-local-database}@db:5432/huh
+      DATA_DIR: /data
+      MODEL_CACHE_DIR: /models
+      SECRET_KEY: ${SECRET_KEY:-}
+      CHATGPT_CALLBACK_PORT: ${CHATGPT_CALLBACK_PORT:-1457}
+      CHATGPT_CALLBACK_BIND: 0.0.0.0
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    # Lets a "Custom / local" provider reach model servers running on this PC.
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - 127.0.0.1:${PORT:-8787}:8000
+      - 127.0.0.1:${CHATGPT_CALLBACK_PORT:-1457}:${CHATGPT_CALLBACK_PORT:-1457}
+    volumes:
+      - data:/data
+      - models:/models
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/api/health", timeout=5)']
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 25s
+    restart: unless-stopped
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      <<: *app-environment
+      HF_HOME: /models/huggingface
+    gpus: all
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - data:/data
+      - models:/models
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  database:
+  data:
+  models:

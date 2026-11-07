@@ -1,0 +1,20 @@
+# Use only with -p huh-test. Separate volumes and ports from your personal installation.
+services:
+  app:
+    ports: !override
+      - 127.0.0.1:18787:8000
+      - 127.0.0.1:11457:11457
+    environment:
+      CHATGPT_CALLBACK_PORT: 11457
+  worker:
+    environment:
+      CHATGPT_CALLBACK_PORT: 11457
+  mock-llm:
+    image: python:3.12-slim-bookworm
+    command: [python, /mock_llm.py]
+    volumes:
+      - ./qa/mock_llm.py:/mock_llm.py:ro
+volumes:
+  models:
+    external: true
+    name: huh_models

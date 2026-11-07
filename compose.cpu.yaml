@@ -1,0 +1,7 @@
+# Run with: docker compose -f compose.yaml -f compose.cpu.yaml up -d --build
+# In Settings select transcription device CPU and compute type int8.
+services:
+  worker:
+    gpus: !reset []
+    environment:
+      NVIDIA_VISIBLE_DEVICES: void
