@@ -3,17 +3,17 @@ import Markdown, { SourceInfo } from './Markdown';
 import AudioPlayer, { clock, PlayerHandle } from './AudioPlayer';
 import FindBar from './FindBar';
 import { defaultTitle } from './format';
-import { Archive, BookA, Columns2, ListTodo, Maximize2, NotebookPen, PanelRightClose, Rows3, AudioLines, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, LocateFixed, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, BookA, Columns2, ListTodo, Maximize2, NotebookPen, PanelRightClose, Rows3, AudioLines, ChevronDown, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, LocateFixed, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 import { api, Detail, errorText, Folder, Generation, Job, send, Template } from './api';
 import { FolderGlyph, folderVars } from './folders';
 import Editor from './Editor';
 import { noteLanguageLabel, OUTPUT_LANGUAGES } from './providers';
 import { DeviceIcon } from './Recorder';
-import { Badge, Callout, cx, Menu, MenuItem, Select, Spinner, useToast } from './ui';
+import { Badge, Callout, cx, Menu, MenuItem, Modal, Select, Spinner, useToast } from './ui';
 
 export type Tab = 'notes' | 'enhanced' | 'transcript' | 'history';
 /** Things the command palette can ask the open meeting to do. */
-export type MeetingCommand = 'find' | 'focus';
+export type MeetingCommand = 'find' | 'focus' | 'generate' | 'ai-options';
 const MEETING_COMMAND = 'huh:meeting-command';
 export const runMeetingCommand = (what: MeetingCommand) => window.dispatchEvent(new CustomEvent<MeetingCommand>(MEETING_COMMAND, { detail: what }));
 
@@ -133,7 +133,10 @@ export default function MeetingView({
   defaultNoteLanguage = 'auto',
   glossaryCount = 0,
   onGlossary,
+  phone = false,
 }: {
+  /** The phone layout: one tab at a time, bigger controls; the actions menu lives in the phone's top bar. */
+  phone?: boolean;
   id: string;
   /** The "Language of AI notes" setting, used when the meeting has no choice of its own. */
   defaultNoteLanguage?: string;
@@ -181,7 +184,11 @@ export default function MeetingView({
       localStorage.setItem(SPLIT_KEY, split ? '1' : '0');
     } catch {}
   }, [split]);
+  /** Actions the phone's ⋯ menu can run here; refreshed every render. */
+  const commands = useRef<{ generate: () => Promise<void> }>({ generate: async () => {} });
   const [findOpen, setFindOpen] = useState(false);
+  /** Phone: the sheet with Format and Language for AI notes. */
+  const [aiOptions, setAiOptions] = useState(false);
   const [findInit, setFindInit] = useState<{ text: string; n: number } | null>(null);
   const [findAnchor, setFindAnchor] = useState<string | null>(null);
   const [seek, setSeek] = useState<SeekRequest | null>(null);
@@ -245,7 +252,8 @@ export default function MeetingView({
         setFocus(false);
         setFindOpen(false);
         requestAnimationFrame(() => setFindOpen(true));
-      }
+      } else if (what === 'generate') void commands.current.generate();
+      else if (what === 'ai-options') setAiOptions(true);
     };
     window.addEventListener('keydown', onKey);
     window.addEventListener(MEETING_COMMAND, onCommand);
@@ -305,6 +313,13 @@ export default function MeetingView({
     return () => ro.disconnect();
   }, [hasRoot]);
 
+  // The phone's top bar shows Edit only on a note tab.
+  useEffect(() => {
+    if (!phone) return;
+    document.body.dataset.phoneTab = tab;
+    return () => void delete document.body.dataset.phoneTab;
+  }, [phone, tab]);
+
   const aiTemplates = useMemo(() => templates.filter(t => t.kind === 'ai'), [templates]);
   const noteTemplates = useMemo(() => templates.filter(t => t.kind === 'notes'), [templates]);
   const defaultAi = aiTemplates.find(t => t.is_default) || aiTemplates[0];
@@ -355,6 +370,8 @@ export default function MeetingView({
     }
   }
 
+  commands.current.generate = generate;
+
   /** Main language for this meeting's AI notes; "default" follows Settings. */
   const languageValue = detail.notes_language || 'default';
   const languageOptions = [
@@ -401,8 +418,7 @@ export default function MeetingView({
   const shown = (t: Tab) => (sideBySide ? t === 'notes' || t === right : t === tab);
   const rail = !sideBySide && pageWidth >= RAIL_MIN;
   /** Format + Generate: in the tab row, or in the rail when the rail replaces it. */
-  const aiControls = (
-    <>
+  const formatSelect = (
       <Select
         ariaLabel="AI template"
         size="sm"
@@ -422,6 +438,8 @@ export default function MeetingView({
           </button>
         }
       />
+  );
+  const languageSelect = (
       <Select
         ariaLabel="Main language of AI notes"
         size="sm"
@@ -441,10 +459,18 @@ export default function MeetingView({
         )}
         footer={<small className="muted">Main language of the AI notes. Names and terms can stay as spoken.</small>}
       />
+  );
+  const generateButton = (
       <button type="button" className="primary sm" disabled={busy || generating || !hasTranscript} title={hasTranscript ? undefined : 'Record or import audio first'} onClick={() => void generate()}>
         {generating ? <Spinner size={14} /> : <Sparkles size={15} />} {detail.generations.length ? 'Regenerate' : 'Generate'}
         <span className="gen-suffix">AI notes</span>
       </button>
+  );
+  const aiControls = (
+    <>
+      {formatSelect}
+      {languageSelect}
+      {generateButton}
     </>
   );
 
@@ -467,15 +493,16 @@ export default function MeetingView({
     { id: 'transcript', label: 'Transcript', count: detail.recordings.length || undefined },
     { id: 'history', label: 'History', count: detail.generations.length || undefined },
   ];
-  const tabs = sideBySide ? allTabs.filter(t => t.id !== 'notes') : allTabs;
+  // On a phone, History is reached from the ⋯ menu and only shown as a tab while it's open.
+  const tabs = sideBySide ? allTabs.filter(t => t.id !== 'notes') : phone ? allTabs.filter(t => t.id !== 'history' || tab === 'history') : allTabs;
   const isOn = (t: Tab) => (sideBySide ? t === right : t === tab);
 
   return (
-    <div className={cx('meeting', sideBySide && 'split')} ref={root}>
+    <div className={cx('meeting', sideBySide && 'split', phone && 'phone')} ref={root}>
       <header className="meeting-header">
         <div className="meeting-meta">
           <span>
-            {created.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })} ·{' '}
+            {created.toLocaleDateString(undefined, phone ? { weekday: 'short', month: 'short', day: 'numeric' } : { weekday: 'long', month: 'long', day: 'numeric' })} ·{' '}
             {created.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
           </span>
           {status && <Badge tone={status.tone}>{status.label}</Badge>}
@@ -507,7 +534,7 @@ export default function MeetingView({
               <span>{sideBySide ? 'One column' : 'Side by side'}</span>
             </button>
           )}
-          <Menu
+          {!phone && <Menu
             label="Meeting actions"
             items={[
               {
@@ -531,21 +558,45 @@ export default function MeetingView({
                 <Ellipsis size={18} />
               </button>
             )}
-          />
+          />}
         </div>
-        <input
-          className="title-input"
-          aria-label="Meeting title"
-          placeholder="Untitled meeting"
-          value={title}
-          maxLength={500}
-          onFocus={e => (title === 'Untitled meeting' || title === defaultTitle(created)) && e.target.select()}
-          onChange={e => setTitle(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-          onBlur={() => {
-            if (title !== detail.title) void patch({ title });
-          }}
-        />
+        {phone ? (
+          // A long title wraps onto more lines instead of scrolling sideways out of sight.
+          <textarea
+            className="title-input phone-title"
+            aria-label="Meeting title"
+            placeholder="Untitled meeting"
+            rows={1}
+            value={title}
+            maxLength={500}
+            ref={el => {
+              if (el) {
+                el.style.setProperty('height', 'auto', 'important');
+                el.style.setProperty('height', `${el.scrollHeight}px`, 'important');
+              }
+            }}
+            onFocus={e => (title === 'Untitled meeting' || title === defaultTitle(created)) && e.target.select()}
+            onChange={e => setTitle(e.target.value.replace(/\n/g, ' '))}
+            onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), (e.target as HTMLTextAreaElement).blur())}
+            onBlur={() => {
+              if (title !== detail.title) void patch({ title });
+            }}
+          />
+        ) : (
+          <input
+            className="title-input"
+            aria-label="Meeting title"
+            placeholder="Untitled meeting"
+            value={title}
+            maxLength={500}
+            onFocus={e => (title === 'Untitled meeting' || title === defaultTitle(created)) && e.target.select()}
+            onChange={e => setTitle(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+            onBlur={() => {
+              if (title !== detail.title) void patch({ title });
+            }}
+          />
+        )}
         {detail.archived && (
           <div className="archived-banner">
             <Archive size={15} />
@@ -561,7 +612,26 @@ export default function MeetingView({
 
       <div className={cx('meeting-body', rail && 'with-rail')}>
         <div className="meeting-main">
-          {!rail && (
+          {phone && (
+            <Menu
+              label="Show"
+              placement="bottom-start"
+              items={allTabs
+                .filter(t => t.id !== 'history' || detail.generations.length > 0)
+                .map(t => ({
+                  label: t.label + (t.count ? ` (${t.count})` : ''),
+                  icon: t.id === 'notes' ? <NotebookPen size={17} /> : t.id === 'enhanced' ? <Sparkles size={17} /> : t.id === 'transcript' ? <AudioLines size={17} /> : <History size={17} />,
+                  onSelect: () => setTab(t.id),
+                }))}
+              trigger={p => (
+                <button type="button" className="phone-view" {...p} ref={p.ref}>
+                  {allTabs.find(t => t.id === tab)?.label}
+                  <ChevronDown size={15} />
+                </button>
+              )}
+            />
+          )}
+          {!rail && !phone && (
           <div className={cx('tabbar', sideBySide && 'split')}>
             {sideBySide && (
               <div className="tabs pane-label">
@@ -576,9 +646,11 @@ export default function MeetingView({
                 </button>
               ))}
             </div>
-            <div className="generate-group">
-              {aiControls}
-            </div>
+            {!phone && (
+              <div className="generate-group">
+                {aiControls}
+              </div>
+            )}
           </div>
           )}
 
@@ -632,7 +704,12 @@ export default function MeetingView({
                 onFocusCapture={sideBySide ? () => setTab(t) : undefined}
                 onPointerDownCapture={sideBySide ? () => setTab(t) : undefined}
               >
-                {t === 'enhanced' && !rail && detail.generations.length > 0 && <VersionPicker detail={detail} onShow={showVersion} />}
+                {t === 'enhanced' && phone && !detail.generations.length && !generating && (
+                  <div className="phone-ai-empty">
+                    {hasTranscript ? generateButton : <p className="muted">No AI notes yet. Record or import audio first.</p>}
+                  </div>
+                )}
+                {t === 'enhanced' && !rail && !phone && detail.generations.length > 0 && <VersionPicker detail={detail} onShow={showVersion} />}
                 <Editor
                   key={detail.id + t}
                   meeting={detail}
@@ -710,7 +787,16 @@ export default function MeetingView({
           />
         )}
       </div>
-
+      {phone && (
+        <Modal open={aiOptions} onClose={() => setAiOptions(false)} title="AI notes">
+          <div className="phone-ai-sheet">
+            <label>Format</label>
+            {formatSelect}
+            <label>Language</label>
+            {languageSelect}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

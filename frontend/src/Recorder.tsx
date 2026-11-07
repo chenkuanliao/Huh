@@ -534,6 +534,29 @@ export default function Recorder({
     return () => clearInterval(timer);
   }, [capturing, paused]);
 
+  // “Record now” on the phone: start as soon as the recorder follows the new meeting.
+  const controlRef = useRef<(action: 'start') => Promise<void>>(async () => {});
+  useEffect(() => {
+    const onStart = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      let tries = 0;
+      const attempt = () => {
+        if (latest.current.meeting === id) void controlRef.current('start');
+        else if (tries++ < 20) setTimeout(attempt, 50);
+      };
+      attempt();
+    };
+    window.addEventListener('huh:start-recording', onStart);
+    return () => window.removeEventListener('huh:start-recording', onStart);
+  }, []);
+
+  // The phone's ⋯ menu opens recording setup (microphone, which device records).
+  useEffect(() => {
+    const open = () => setSetupOpen(true);
+    window.addEventListener('huh:recording-setup', open);
+    return () => window.removeEventListener('huh:recording-setup', open);
+  }, []);
+
   // Allow other parts of the app to open the import dialog.
   useEffect(() => {
     const open = () => setImportOpen(true);
@@ -572,6 +595,8 @@ export default function Recorder({
     }
   }
 
+  controlRef.current = a => control(a);
+
   async function policy(order: string[], auto = state?.auto_fallback || false) {
     if (!meeting) return;
     try {
@@ -594,6 +619,13 @@ export default function Recorder({
   const activeDevice = activeId === deviceId ? null : devices.find(d => d.id === activeId);
   const isLive = !paused && status !== 'paused' && (status === 'recording' || status === 'switching' || capturing);
   const isStarting = status === 'starting';
+
+  // Lets the phone layout show a recording badge (and hide its Record button) anywhere in the app.
+  const recActive = !!(capturing || isLive || isStarting || status === 'paused');
+  useEffect(() => {
+    document.body.classList.toggle('rec-active', recActive);
+    return () => document.body.classList.remove('rec-active');
+  }, [recActive]);
 
   const micOptions = useMemo(() => {
     const real = mics.filter(m => m.deviceId && m.deviceId !== 'default' && m.deviceId !== 'communications');

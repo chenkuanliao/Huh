@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal, flushSync } from 'react-dom';
+import { isPhoneLayout } from './sheet';
 import Markdown, { SourceInfo, toggleTask } from './Markdown';
-import { handleEditorKeys } from './textkeys';
+import { handleEditorKeys, shiftListLine } from './textkeys';
 import { ChevronDown, Expand, FileText, LayoutTemplate, Maximize2, Minimize2, Settings2, Shrink } from 'lucide-react';
 import { api, ApiError, errorText, send, Meeting, Template } from './api';
 import { cx, Menu, Segmented } from './ui';
@@ -85,7 +86,11 @@ export default function Editor({
   const revision = field === 'notes' ? 'notes_revision' : 'enhanced_revision';
   const [text, setText] = useState<string>(draft?.text ?? meeting[field]);
   const [status, setStatus] = useState('Saved');
-  const [preview, setPreview] = useState(defaultView === 'preview');
+  // Phone: a note with text opens for reading (Edit in the top bar starts typing); an empty note opens ready to type.
+  // AI notes always open for reading.
+  const [preview, setPreview] = useState(() =>
+    isPhoneLayout() ? field !== 'notes' || !!String(draft?.text ?? meeting[field] ?? '').trim() : defaultView === 'preview',
+  );
   const [conflict, setConflict] = useState<Meeting | null>(null);
   const base = useRef<number>(draft?.revision ?? meeting[revision]);
   const saved = useRef(meeting[field]);
@@ -147,6 +152,111 @@ export default function Editor({
     }
     return () => clearTimeout(timer);
   }, [reveal?.n]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Phone: the note is the page. The text box grows with its text (the page scrolls, not the box),
+  // reading is the formatted view, a tap on it starts typing there, and leaving the box goes back to reading.
+  const phone = isPhoneLayout();
+  useLayoutEffect(() => {
+    const el = area.current;
+    if (!phone || !el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight + 2}px`;
+  }, [phone, text, preview]);
+  // Phone: while typing, swipe right on a bullet / checkbox line to indent it, left to outdent (like Tab / Shift+Tab).
+  // Swipes are read on a strip over the left edge of the note (the bullets and boxes): inside the text itself iOS
+  // claims a dragging finger for text selection, so the swipe would never arrive. The line flashes when it moves,
+  // or flashes red when it can't (not a list line, or nothing above it to nest under).
+  const gutter = useRef<HTMLDivElement>(null);
+  const [swipeMark, setSwipeMark] = useState<{ top: number; height: number; ok: boolean; n: number } | null>(null);
+  useEffect(() => {
+    const el = area.current;
+    const strip = gutter.current;
+    if (!phone || !el || preview) return;
+    let x0 = 0;
+    let y0 = 0;
+    let line = -1;
+    let moved = false;
+    let done = false;
+    const lineAt = (clientY: number) => {
+      const y = clientY - el.getBoundingClientRect().top + el.scrollTop;
+      const lines = el.value.split('\n');
+      let lo = 0;
+      let hi = lines.length - 1;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (measureLine(el, lines, mid).top <= y) lo = mid;
+        else hi = mid - 1;
+      }
+      return lo;
+    };
+    const mark = (index: number, ok: boolean) => {
+      const m = measureLine(el, el.value.split('\n'), index);
+      setSwipeMark({ top: m.top - el.scrollTop, height: m.height, ok, n: Date.now() });
+    };
+    const start = (e: TouchEvent) => {
+      const fromStrip = e.currentTarget === strip;
+      if (e.touches.length !== 1 || (!fromStrip && document.activeElement !== el)) return void (line = -1);
+      x0 = e.touches[0].clientX;
+      y0 = e.touches[0].clientY;
+      line = lineAt(y0);
+      moved = false;
+      done = false;
+    };
+    const move = (e: TouchEvent) => {
+      if (line < 0 || e.touches.length !== 1) return;
+      const dx = e.touches[0].clientX - x0;
+      const dy = e.touches[0].clientY - y0;
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) moved = true;
+      if (done) return void e.preventDefault();
+      if (Math.abs(dx) < 28 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
+      done = true;
+      e.preventDefault();
+      const ok = shiftListLine(el, line, dx < 0);
+      mark(line, ok);
+    };
+    // On the strip, a tap (no swipe) puts the caret at the start of that line's text, and never closes the keyboard.
+    const end = (e: TouchEvent) => {
+      if (e.currentTarget !== strip || line < 0) return;
+      e.preventDefault();
+      if (moved || done) return;
+      const lines = el.value.split('\n');
+      let at = 0;
+      for (let i = 0; i < line; i++) at += lines[i].length + 1;
+      const marker = lines[line].match(/^\s*(?:(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)?/)?.[0].length ?? 0;
+      el.focus();
+      el.setSelectionRange(at + marker, at + marker);
+    };
+    const targets: HTMLElement[] = strip ? [el, strip] : [el];
+    for (const t of targets) {
+      t.addEventListener('touchstart', start, { passive: true });
+      t.addEventListener('touchmove', move, { passive: false });
+      t.addEventListener('touchend', end, { passive: false });
+    }
+    return () => {
+      for (const t of targets) {
+        t.removeEventListener('touchstart', start);
+        t.removeEventListener('touchmove', move);
+        t.removeEventListener('touchend', end);
+      }
+    };
+  }, [phone, preview]);
+
+  // The phone's Edit button: the visible editor switches to typing. It runs inside the tap, so the text box is
+  // rendered and focused synchronously (iOS only raises the keyboard then).
+  useEffect(() => {
+    if (!phone) return;
+    const onEdit = () => {
+      if (!root.current || root.current.offsetParent === null) return;
+      flushSync(() => setPreview(false));
+      const el = area.current;
+      if (!el) return;
+      el.focus();
+      const end = el.value.length;
+      el.setSelectionRange(end, end);
+    };
+    window.addEventListener('huh:phone-edit', onEdit);
+    return () => window.removeEventListener('huh:phone-edit', onEdit);
+  }, [phone]);
 
   const followScroll = () => {
     if (band.current && area.current) band.current.style.transform = `translateY(${-area.current.scrollTop}px)`;
@@ -325,6 +435,16 @@ export default function Editor({
   );
 
   const tone = status === 'Saved' ? 'good' : status === 'Conflict' || status.startsWith('Save failed') ? 'bad' : 'pending';
+  // The phone shows the save state in its top bar, next to the meeting's title.
+  useEffect(() => {
+    if (!phone) return;
+    const key = `${meeting.id}:${field}`;
+    window.dispatchEvent(new CustomEvent('huh:save-state', { detail: { key, meeting: meeting.id, status, tone } }));
+  }, [phone, status, tone, meeting.id, field]);
+  useEffect(() => {
+    const key = `${meeting.id}:${field}`;
+    return () => void window.dispatchEvent(new CustomEvent('huh:save-state', { detail: { key, meeting: meeting.id, gone: true } }));
+  }, [meeting.id, field]);
   const isNotes = field === 'notes';
 
   return (
@@ -387,19 +507,28 @@ export default function Editor({
           <Maximize2 size={18} /> Editing in focus mode — press Esc to come back
         </button>
       ) : preview ? (
-        <Markdown className="note-preview" text={text} empty={isNotes ? 'Nothing written yet.' : 'No AI notes yet.'} onToggleTask={line => setText(t => toggleTask(t, line))} sources={sources} />
+        <div className="note-preview-wrap">
+          <Markdown className="note-preview" text={text} empty={isNotes ? 'Nothing written yet.' : 'No AI notes yet.'} onToggleTask={line => setText(t => toggleTask(t, line))} sources={sources} />
+        </div>
       ) : (
-        <textarea
-          ref={area}
-          aria-label={isNotes ? 'Meeting notes' : 'AI notes'}
-          className="note-editor"
-          placeholder={placeholder ?? (isNotes ? 'Jot down what matters. Markdown works — # headings, - bullets, - [ ] to-dos.' : 'AI notes appear here after you generate them. You can edit them freely.')}
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={handleEditorKeys}
-          onSelect={e => (caret.current = e.currentTarget.selectionStart)}
-          onScroll={followScroll}
-        />
+        <div className={cx('note-editor-wrap', phone && 'with-swipe')}>
+            <textarea
+              ref={area}
+              aria-label={isNotes ? 'Meeting notes' : 'AI notes'}
+              className="note-editor"
+              onBlur={phone ? () => current.current.trim() && setPreview(true) : undefined}
+              placeholder={placeholder ?? (phone ? 'Start typing…' : isNotes ? 'Jot down what matters. Markdown works — # headings, - bullets, - [ ] to-dos.' : 'AI notes appear here after you generate them. You can edit them freely.')}
+              value={text}
+              onChange={e => setText(e.target.value)}
+              onKeyDown={handleEditorKeys}
+              onSelect={e => (caret.current = e.currentTarget.selectionStart)}
+              onScroll={followScroll}
+            />
+            {phone && <div ref={gutter} className="swipe-gutter" aria-hidden="true" />}
+            {swipeMark && (
+              <div key={swipeMark.n} className={cx('swipe-band', !swipeMark.ok && 'refused')} style={{ top: swipeMark.top, height: swipeMark.height }} onAnimationEnd={() => setSwipeMark(null)} aria-hidden="true" />
+            )}
+        </div>
       )}
       {flash && !focus && !preview && (
         <div className="line-flash-box" style={flash.box} aria-hidden="true">

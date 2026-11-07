@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { isPhoneLayout, useSheetGestures } from './sheet';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, CircleAlert, CircleCheck, Info, Loader2, Search, X } from 'lucide-react';
 
@@ -49,6 +50,9 @@ export function Popover({
   const [style, setStyle] = useState<React.CSSProperties>({ visibility: 'hidden' });
   const close = useRef(onClose);
   close.current = onClose;
+  // Phone layout: popovers are bottom sheets over a scrim that swallows the tap that closes them.
+  const sheet = open && isPhoneLayout();
+  useSheetGestures(ref, sheet, onClose);
 
   const position = useCallback(() => {
     const a = anchor.current;
@@ -97,6 +101,8 @@ export function Popover({
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node;
       if (ref.current?.contains(t) || anchor.current?.contains(t)) return;
+      // On a phone each sheet has its own scrim; a tap on a nested sheet's scrim closes only that sheet.
+      if (t instanceof Element && t.classList.contains('sheet-scrim') && t.nextElementSibling !== ref.current) return;
       // Clicks inside a nested popover (e.g. a dropdown opened from this panel) are not "outside".
       const other = t instanceof Element ? t.closest('.popover') : null;
       if (other && ref.current && other.compareDocumentPosition(ref.current) & Node.DOCUMENT_POSITION_PRECEDING) return;
@@ -126,9 +132,13 @@ export function Popover({
 
   if (!open) return null;
   return createPortal(
-    <div ref={ref} className={cx('popover', className)} style={style} role={role} aria-label={label}>
-      {children}
-    </div>,
+    <>
+      {sheet && <div className="sheet-scrim" aria-hidden onClick={e => e.preventDefault()} />}
+      <div ref={ref} className={cx('popover', className)} style={style} role={role} aria-label={label}>
+        {sheet && <div className="sheet-grip" aria-hidden />}
+        {children}
+      </div>
+    </>,
     document.body,
   );
 }
@@ -629,6 +639,8 @@ export function Modal({
   const titleId = useId();
   const close = useRef(onClose);
   close.current = onClose;
+  const sheet = open && isPhoneLayout();
+  useSheetGestures(ref, sheet, onClose);
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -649,6 +661,7 @@ export function Modal({
   return createPortal(
     <div className="modal-backdrop" onPointerDown={e => e.target === e.currentTarget && onClose()}>
       <div ref={ref} className={cx('modal', size)} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        {sheet && <div className="sheet-grip" aria-hidden />}
         <header className="modal-header">
           <div>
             <h2 id={titleId}>{title}</h2>
