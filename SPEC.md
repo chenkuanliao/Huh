@@ -18,8 +18,8 @@ All paths below under /api; JSON unless specified. Error shape {detail:string}; 
 - POST /meetings/{id}/transcribe {} -> Job (queues pending complete recordings, then generation)
 - GET /meetings/{id}/export?format=md -> file
 - GET /search?q= -> {results:[{meeting_id,title,field,snippet,updated_at,archived,recording_id?,start?,segment_id?}]}; archived meetings always rank after active ones
-- GET /folders -> Folder[]; POST /folders {name} -> Folder; PATCH /folders/{id} {name} -> Folder; DELETE /folders/{id} (meetings move out, nothing else is deleted)
-Folder {id,name,created_at}
+- GET /folders -> Folder[]; POST /folders {name, color?, icon?} -> Folder; PATCH /folders/{id} {name?, color?, icon?} -> Folder; DELETE /folders/{id} (meetings move out, nothing else is deleted)
+Folder {id,name,color,icon,created_at}; color is null or one of slate|red|orange|amber|green|teal|blue|indigo|violet|pink; icon is null or a kebab-case icon key drawn by the client
 Meeting {id,title,notes,notes_revision,enhanced_notes,enhanced_revision,template_id,language,folder_id,archived,created_at,updated_at,status}
 Archive keeps a meeting intact but hides it from the main list and dashboard; it stays searchable, ranked last.
 MeetingDetail extends Meeting with {recordings:Recording[],transcript:TranscriptSegment[],generations:Generation[],jobs:Job[],recording_state:RecordingState}
@@ -53,7 +53,7 @@ Server monitors heartbeat expiry (~12s) and start timeout (~15s), triggers expli
 Template {id,name,instructions,structure,is_default?}
 - GET /settings -> Settings (no credentials)
 - PUT /settings partial -> Settings. Input may include api_keys object provider->key; blank leaves unchanged; explicit clear via null.
-Settings {provider,model,base_url,system_prompt,output_language,stt_model,stt_language,stt_device,stt_compute_type,traditional_chinese,api_key_status:Record<string,boolean>}
+Settings {provider,model,base_url,system_prompt,output_language,stt_model,stt_language,stt_device,stt_compute_type,traditional_chinese,notes_view,ai_notes_view,back_behavior,api_key_status:Record<string,boolean>}; back_behavior "up" (default: meeting → its folder → Home) | "history" (previously visited page)
 Defaults provider chatgpt, output_language auto, stt_model large-v3-turbo, stt_language mixed (options auto/en/zh/mixed), stt_device cuda, stt_compute_type float16, traditional_chinese true.
 Providers IDs chatgpt/openai/anthropic/google/openrouter/opencode/nvidia/custom. Keep provider adapters and platform-specific parameters; no automatic paid fallback.
 - POST /settings/test {provider?,model?} -> {ok,message}; actual small inference explicitly requested by user

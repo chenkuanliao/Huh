@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowRight, CircleCheck, Undo2, X, AudioLines, CircleAlert, Clock, FileAudio, ListTodo, Mic, Plus, Sparkles, CalendarDays } from 'lucide-react';
-import { api, ApiError, errorText, Job, Meeting, send, Settings as SettingsT } from './api';
+import { ArrowRight, AudioLines, CircleAlert, CircleCheck, Clock, Ellipsis, FileAudio, FileText, FolderPlus, ListTodo, Mic, Plus, Sparkles, CalendarDays, Undo2, X } from 'lucide-react';
+import { api, ApiError, errorText, Folder, Job, Meeting, send, Settings as SettingsT } from './api';
 import { stripSources, toggleTask } from './Markdown';
-import { Callout, cx, Spinner, useToast } from './ui';
+import { Callout, cx, Menu, MenuItem, Spinner, useToast } from './ui';
+import { FolderGlyph, FolderTile, folderVars } from './folders';
 
-type MeetingStats = { recorded_seconds: number; recordings: number; segments: number; generations: number };
+export type MeetingStats = { recorded_seconds: number; recordings: number; segments: number; generations: number };
 type DashJob = Job & { meeting_id: string; meeting_title: string | null };
-type DashData = { meetings: Record<string, MeetingStats>; jobs: DashJob[] };
+export type DashData = { meetings: Record<string, MeetingStats>; jobs: DashJob[] };
 type Field = 'notes' | 'enhanced_notes';
 type Todo = { meeting: Meeting; field: Field; line: number; raw: string; text: string; key: string };
 
@@ -25,6 +26,7 @@ function undoBelongsElsewhere(target: EventTarget | null) {
   return !!document.querySelector('[role="dialog"], [aria-modal="true"]') || document.body.classList.contains('focus-active');
 }
 
+
 const OPEN_TASK = /^(?:\s*>)*\s*(?:[-*+]|\d+[.)])\s+\[ \]\s+(.+)$/;
 
 function startOfWeek(d: Date) {
@@ -34,14 +36,14 @@ function startOfWeek(d: Date) {
   return x.getTime();
 }
 
-function duration(seconds: number) {
+export function duration(seconds: number) {
   if (seconds < 60) return seconds > 0 ? '<1m' : '0m';
   const h = Math.floor(seconds / 3600);
   const m = Math.round((seconds % 3600) / 60);
   return h ? `${h}h ${m}m` : `${m}m`;
 }
 
-function plain(markdown: string) {
+export function plain(markdown: string) {
   return stripSources(markdown)
     .split('\n')
     .filter(l => l.trim() && !/^\s*#/.test(l) && !/^\s*\|/.test(l) && !/^\s*[-*+]\s*(\[[ xX]\])?\s*$/.test(l))
@@ -63,29 +65,120 @@ function delta(now: number, before: number, unit = '') {
   return `${d > 0 ? '+' : '−'}${Math.abs(d)}${unit} vs last week`;
 }
 
-export default function Dashboard({
-  meetings,
+export function collectTodos(meetings: Meeting[]) {
+  const out: Todo[] = [];
+  for (const m of meetings) {
+    // One source per meeting: AI notes when they exist (they already fold in your notes), otherwise My notes.
+    const field = (m.enhanced_notes || '').trim() ? 'enhanced_notes' : 'notes';
+    (m[field] || '').split('\n').forEach((l, i) => {
+      const match = l.match(OPEN_TASK);
+      if (match) out.push({ meeting: m, field, line: i + 1, raw: l, text: stripSources(match[1]).replace(/[*_`]/g, '').trim(), key: `${m.id}:${field}:${i}` });
+    });
+  }
+  return out;
+}
+
+/** Recording and AI stats per meeting, plus queued/failed jobs; refreshed every few seconds. */
+export function useDashData() {
+  const [data, setData] = useState<DashData | null>(null);
+  const load = useCallback(async () => {
+    try {
+      setData(await api<DashData>('/dashboard'));
+    } catch {}
+  }, []);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(load, 5000);
+    return () => clearInterval(timer);
+  }, [load]);
+  return data;
+}
+
+export function relativeDay(iso: string) {
+  const d = new Date(iso);
+  const start = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((start(new Date()) - start(d)) / 86400000);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days} days ago`;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+}
+
+function shortWhen(iso: string) {
+  const d = new Date(iso);
+  const day = relativeDay(iso);
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return day === 'Today' || day === 'Yesterday' ? `${day}, ${time}` : day.endsWith('ago') ? d.toLocaleDateString(undefined, { weekday: 'short' }) + `, ${time}` : day;
+}
+
+/** One meeting as a compact row: title and a one-line preview, details on the right. */
+export function MeetingRow({
+  meeting: m,
+  stats: s,
+  folder,
+  hideFolder,
   onOpen,
+}: {
+  meeting: Meeting;
+  stats?: MeetingStats;
+  folder?: Folder;
+  /** Tint by the folder but leave out its label (e.g. inside that folder's page). */
+  hideFolder?: boolean;
+  onOpen: (id: string) => void;
+}) {
+  const snippet = plain(m.notes) || plain(m.enhanced_notes);
+  const recording = m.status === 'recording';
+  const Icon = s?.recorded_seconds || recording ? Mic : FileText;
+  return (
+    <li>
+      <button type="button" className="mrow" onClick={() => onOpen(m.id)} style={folder ? folderVars(folder) : undefined}>
+        <span className={cx('mrow-icon', folder && 'tinted')} aria-hidden>
+          {recording ? <span className="rec-dot small-dot" /> : <Icon size={15} />}
+        </span>
+        <span className="mrow-main">
+          <span className="mrow-top">
+            <strong className="truncate">{m.title || 'Untitled meeting'}</strong>
+            {folder && !hideFolder && (
+              <span className="recent-folder">
+                <FolderGlyph folder={folder} size={12} />
+                <span className="truncate">{folder.name}</span>
+              </span>
+            )}
+            {s?.recorded_seconds ? (
+              <span className="mrow-stat" title="Recorded">
+                <AudioLines size={12} /> {duration(s.recorded_seconds)}
+              </span>
+            ) : null}
+            {s?.generations ? (
+              <span className="mrow-stat ai" title="Has AI notes">
+                <Sparkles size={12} /> AI
+              </span>
+            ) : null}
+          </span>
+          <span className={cx('mrow-snippet truncate', !snippet && 'empty')}>{snippet || 'No notes yet'}</span>
+        </span>
+        <span className="mrow-when" title={new Date(m.updated_at).toLocaleString()}>
+          {recording ? 'Recording now' : shortWhen(m.updated_at)}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+/** Open checkboxes from the given meetings. Tick to complete (with Undo), or click one to see it in its note. */
+export function TodoPanel({
+  meetings,
   onReveal,
-  onNew,
-  onImport,
-  onSettings,
   reloadMeetings,
-  creating,
+  description = 'From each meeting’s AI notes, or your own notes when it has none. Tick to complete, or click one to see it in its note.',
 }: {
   meetings: Meeting[];
-  onOpen: (id: string) => void;
   /** Open a meeting's note at a source line and highlight it. */
   onReveal: (id: string, field: Field, line: number, lineText: string) => void;
-  onNew: () => void;
-  onImport: () => void;
-  onSettings: (section: 'ai' | 'transcription') => void;
   reloadMeetings: () => Promise<void>;
-  creating: boolean;
+  description?: string;
 }) {
   const toast = useToast();
-  const [data, setData] = useState<DashData | null>(null);
-  const [settings, setSettings] = useState<SettingsT | null>(null);
   // Ticked to-dos stay on screen checked for a beat, then fade and collapse before the list refreshes.
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [gone, setGone] = useState<Set<string>>(new Set());
@@ -99,67 +192,7 @@ export default function Dashboard({
   const nextId = useRef(1);
   const returning = useRef(new Set<string>());
   const [showAll, setShowAll] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      setData(await api<DashData>('/dashboard'));
-    } catch {}
-  }, []);
-  useEffect(() => {
-    void load();
-    api<SettingsT>('/settings')
-      .then(setSettings)
-      .catch(() => {});
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
-  }, [load]);
-
-  const now = new Date();
-  const hour = now.getHours();
-  const greeting = hour < 5 ? 'Working late' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-
-  const summary = useMemo(() => {
-    const week = startOfWeek(now);
-    const lastWeek = week - 7 * 86400000;
-    let thisCount = 0,
-      lastCount = 0,
-      thisSec = 0,
-      lastSec = 0,
-      totalSec = 0,
-      ai = 0;
-    for (const m of meetings) {
-      const t = new Date(m.created_at || m.updated_at).getTime();
-      const s = data?.meetings[m.id];
-      totalSec += s?.recorded_seconds || 0;
-      ai += s?.generations || 0;
-      if (t >= week) {
-        thisCount++;
-        thisSec += s?.recorded_seconds || 0;
-      } else if (t >= lastWeek) {
-        lastCount++;
-        lastSec += s?.recorded_seconds || 0;
-      }
-    }
-    return { thisCount, lastCount, thisSec, lastSec, totalSec, ai };
-  }, [meetings, data]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const todos = useMemo(() => {
-    const out: Todo[] = [];
-    for (const m of meetings) {
-      // One source per meeting: AI notes when they exist (they already fold in your notes), otherwise My notes.
-      const field = (m.enhanced_notes || '').trim() ? 'enhanced_notes' : 'notes';
-      (m[field] || '').split('\n').forEach((l, i) => {
-        const match = l.match(OPEN_TASK);
-        if (match) out.push({ meeting: m, field, line: i + 1, raw: l, text: stripSources(match[1]).replace(/[*_`]/g, '').trim(), key: `${m.id}:${field}:${i}` });
-      });
-    }
-    return out;
-  }, [meetings]);
-
-  const recent = meetings.slice(0, 4);
-  const active = (data?.jobs || []).filter(j => j.status === 'queued' || j.status === 'running');
-  const failed = (data?.jobs || []).filter(j => j.status === 'failed');
-  const meetingsWithTodos = new Set(todos.map(t => t.meeting.id)).size;
+  const todos = useMemo(() => collectTodos(meetings), [meetings]);
 
   // Forget animation state for to-dos that have left the list (or come back after being unticked elsewhere).
   useEffect(() => {
@@ -298,6 +331,195 @@ export default function Dashboard({
   const visibleTodos = showAll ? shown : shown.slice(0, 7);
 
   return (
+    <>
+      <section className="panel dash-todos">
+        <div className="panel-head">
+          <div>
+            <h2>Open to-dos</h2>
+            <p className="muted">{description}</p>
+          </div>
+        </div>
+        {shown.length === 0 ? (
+          <p className="hint">Nothing open. Add a checkbox in any note with “- [ ] ”.</p>
+        ) : (
+          <ul className="todo-list">
+            {visibleTodos.map(t => {
+              const done = checked.has(t.key);
+              return (
+                <li
+                  key={t.key}
+                  ref={el => rowRef(t.key, el)}
+                  className={cx(done && 'done')}
+                >
+                  <input type="checkbox" className="task-box inline" aria-label={`Complete: ${t.text}`} checked={done} disabled={done} onChange={() => void tick(t)} />
+                  <button
+                    type="button"
+                    className="todo-text"
+                    title="Show in the note"
+                    disabled={done}
+                    onClick={() => onReveal(t.meeting.id, t.field, t.line, t.raw)}
+                  >
+                    <span className="todo-label">
+                      <span>{t.text}</span>
+                    </span>
+                    <span className="todo-source">
+                      {t.meeting.title || 'Untitled meeting'}
+                      {t.field === 'enhanced_notes' ? ' · AI notes' : ''}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {shown.length > 7 && (
+          <button type="button" className="ghost sm" onClick={() => setShowAll(v => !v)}>
+            {showAll ? 'Show fewer' : `Show all ${shown.length}`}
+          </button>
+        )}
+      </section>
+      {undos.length > 0 &&
+        createPortal(
+          (() => {
+            const last = undos[undos.length - 1];
+            return (
+              <div className="undo-bar" role="status" key={last.id}>
+                <CircleCheck size={17} className="undo-icon" />
+                <span className="undo-text">
+                  {undos.length > 1 ? `${undos.length} to-dos completed` : 'Completed'} <span className="undo-what">“{last.todo.text}”</span>
+                </span>
+                <button type="button" className="undo-button" onClick={() => void undo(last)}>
+                  <Undo2 size={15} /> Undo <kbd>{isMac ? '⌘Z' : 'Ctrl+Z'}</kbd>
+                </button>
+                <button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setUndos([])}>
+                  <X size={15} />
+                </button>
+                <span className="undo-timer" style={{ animationDuration: `${UNDO_MS}ms` }} />
+              </div>
+            );
+          })(),
+          document.body,
+        )}
+    </>
+  );
+}
+
+function FolderCard({ folder: f, meetings, stats, onOpen, actions }: { folder: Folder; meetings: Meeting[]; stats: DashData | null; onOpen: () => void; actions: MenuItem[] }) {
+  const seconds = meetings.reduce((n, m) => n + (stats?.meetings[m.id]?.recorded_seconds || 0), 0);
+  const latest = [...meetings].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  return (
+    <div className="folder-card" style={folderVars(f)}>
+      <button type="button" className="folder-card-main" onClick={onOpen} aria-label={`Open folder ${f.name}`}>
+        <FolderTile folder={f} size={42} />
+        <strong className="folder-card-name truncate">{f.name}</strong>
+        <span className="folder-card-meta">
+          {meetings.length ? `${meetings.length} meeting${meetings.length === 1 ? '' : 's'}` : 'Empty'}
+          {seconds > 0 && ` · ${duration(seconds)}`}
+          {latest[0] && ` · ${relativeDay(latest[0].updated_at)}`}
+        </span>
+        <span className="folder-card-list">
+          {latest.slice(0, 2).map(m => (
+            <span key={m.id} className="truncate">
+              {m.title || 'Untitled meeting'}
+            </span>
+          ))}
+          {!latest.length && <span className="empty">Drag meetings here from the sidebar</span>}
+        </span>
+      </button>
+      <Menu
+        label={`Actions for folder ${f.name}`}
+        items={actions}
+        header={<div className="menu-header truncate">{f.name}</div>}
+        trigger={p => (
+          <button type="button" className="icon-button folder-card-menu" aria-label={`Actions for folder ${f.name}`} {...p}>
+            <Ellipsis size={16} />
+          </button>
+        )}
+      />
+    </div>
+  );
+}
+
+export default function Dashboard({
+  meetings,
+  folders,
+  onOpen,
+  onReveal,
+  onOpenFolder,
+  onNewFolder,
+  folderActions,
+  onNew,
+  onImport,
+  onSettings,
+  reloadMeetings,
+  creating,
+}: {
+  meetings: Meeting[];
+  folders: Folder[];
+  onOpen: (id: string) => void;
+  /** Open a meeting's note at a source line and highlight it. */
+  onReveal: (id: string, field: Field, line: number, lineText: string) => void;
+  onOpenFolder: (id: string) => void;
+  onNewFolder: () => void;
+  folderActions: (f: Folder) => MenuItem[];
+  onNew: () => void;
+  onImport: () => void;
+  onSettings: (section: 'ai' | 'transcription') => void;
+  reloadMeetings: () => Promise<void>;
+  creating: boolean;
+}) {
+  const data = useDashData();
+  const [settings, setSettings] = useState<SettingsT | null>(null);
+  useEffect(() => {
+    api<SettingsT>('/settings')
+      .then(setSettings)
+      .catch(() => {});
+  }, []);
+  const folderById = useMemo(() => new Map(folders.map(f => [f.id, f])), [folders]);
+  const inFolder = useMemo(() => {
+    const out = new Map<string, Meeting[]>(folders.map(f => [f.id, []]));
+    for (const m of meetings) if (m.folder_id) out.get(m.folder_id)?.push(m);
+    return out;
+  }, [meetings, folders]);
+
+  const now = new Date();
+  const hour = now.getHours();
+  const greeting = hour < 5 ? 'Working late' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+
+  const summary = useMemo(() => {
+    const week = startOfWeek(now);
+    const lastWeek = week - 7 * 86400000;
+    let thisCount = 0,
+      lastCount = 0,
+      thisSec = 0,
+      lastSec = 0,
+      totalSec = 0,
+      ai = 0;
+    for (const m of meetings) {
+      const t = new Date(m.created_at || m.updated_at).getTime();
+      const s = data?.meetings[m.id];
+      totalSec += s?.recorded_seconds || 0;
+      ai += s?.generations || 0;
+      if (t >= week) {
+        thisCount++;
+        thisSec += s?.recorded_seconds || 0;
+      } else if (t >= lastWeek) {
+        lastCount++;
+        lastSec += s?.recorded_seconds || 0;
+      }
+    }
+    return { thisCount, lastCount, thisSec, lastSec, totalSec, ai };
+  }, [meetings, data]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const todos = useMemo(() => collectTodos(meetings), [meetings]);
+
+  const recent = meetings.slice(0, 6);
+  const active = (data?.jobs || []).filter(j => j.status === 'queued' || j.status === 'running');
+  const failed = (data?.jobs || []).filter(j => j.status === 'failed');
+  const meetingsWithTodos = new Set(todos.map(t => t.meeting.id)).size;
+
+
+  return (
     <div className="dashboard">
       <header className="dash-head">
         <div>
@@ -388,6 +610,37 @@ export default function Dashboard({
         </section>
       )}
 
+      <section className="dash-folders" aria-label="Folders">
+        <div className="dash-section-head">
+          <h2>Folders</h2>
+          {folders.length > 0 && (
+            <button type="button" className="ghost sm" onClick={onNewFolder}>
+              <FolderPlus size={15} /> New folder
+            </button>
+          )}
+        </div>
+        {folders.length === 0 ? (
+          <button type="button" className="folder-empty-cta" onClick={onNewFolder}>
+            <FolderPlus size={22} />
+            <span>
+              <strong>Organize meetings into folders</strong>
+              <span className="muted">Give each one a colour and an icon — classes, clients, projects, anything.</span>
+            </span>
+            <ArrowRight size={16} className="muted-icon" />
+          </button>
+        ) : (
+          <div className="folder-grid">
+            {folders.map(f => (
+              <FolderCard key={f.id} folder={f} meetings={inFolder.get(f.id) || []} stats={data} onOpen={() => onOpenFolder(f.id)} actions={folderActions(f)} />
+            ))}
+            <button type="button" className="folder-card new" onClick={onNewFolder}>
+              <FolderPlus size={20} />
+              <span>New folder</span>
+            </button>
+          </div>
+        )}
+      </section>
+
       <div className="dash-grid">
         <section className="panel dash-recent">
           <div className="panel-head">
@@ -406,111 +659,16 @@ export default function Dashboard({
               </button>
             </div>
           ) : (
-            <div className="recent-grid">
-              {recent.map(m => {
-                const s = data?.meetings[m.id];
-                const snippet = plain(m.notes) || plain(m.enhanced_notes);
-                return (
-                  <button key={m.id} type="button" className="recent-card" onClick={() => onOpen(m.id)}>
-                    <span className="recent-top">
-                      <strong className="truncate">{m.title || 'Untitled meeting'}</strong>
-                      {m.status === 'recording' && <span className="rec-dot small-dot" title="Recording" />}
-                    </span>
-                    <span className="recent-date">
-                      {new Date(m.updated_at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                    </span>
-                    <span className={cx('recent-snippet', !snippet && 'empty')}>{snippet || 'No notes yet'}</span>
-                    <span className="recent-meta">
-                      {s?.recorded_seconds ? (
-                        <span>
-                          <AudioLines size={13} /> {duration(s.recorded_seconds)}
-                        </span>
-                      ) : null}
-                      {s?.generations ? (
-                        <span>
-                          <Sparkles size={13} /> AI notes
-                        </span>
-                      ) : null}
-                      {!s?.recorded_seconds && !s?.generations && <span>Notes only</span>}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+            <ul className="mrows">
+              {recent.map(m => (
+                <MeetingRow key={m.id} meeting={m} stats={data?.meetings[m.id]} folder={m.folder_id ? folderById.get(m.folder_id) : undefined} onOpen={onOpen} />
+              ))}
+            </ul>
           )}
         </section>
 
-        <section className="panel dash-todos">
-          <div className="panel-head">
-            <div>
-              <h2>Open to-dos</h2>
-              <p className="muted">
-                From each meeting’s AI notes, or your own notes when it has none. Tick to complete, or click one to see it in its note.
-              </p>
-            </div>
-          </div>
-          {shown.length === 0 ? (
-            <p className="hint">Nothing open. Add a checkbox in any note with “- [ ] ”.</p>
-          ) : (
-            <ul className="todo-list">
-              {visibleTodos.map(t => {
-                const done = checked.has(t.key);
-                return (
-                  <li
-                    key={t.key}
-                    ref={el => rowRef(t.key, el)}
-                    className={cx(done && 'done')}
-                  >
-                    <input type="checkbox" className="task-box inline" aria-label={`Complete: ${t.text}`} checked={done} disabled={done} onChange={() => void tick(t)} />
-                    <button
-                      type="button"
-                      className="todo-text"
-                      title="Show in the note"
-                      disabled={done}
-                      onClick={() => onReveal(t.meeting.id, t.field, t.line, t.raw)}
-                    >
-                      <span className="todo-label">
-                        <span>{t.text}</span>
-                      </span>
-                      <span className="todo-source">
-                        {t.meeting.title || 'Untitled meeting'}
-                        {t.field === 'enhanced_notes' ? ' · AI notes' : ''}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          {shown.length > 7 && (
-            <button type="button" className="ghost sm" onClick={() => setShowAll(v => !v)}>
-              {showAll ? 'Show fewer' : `Show all ${shown.length}`}
-            </button>
-          )}
-        </section>
+        <TodoPanel meetings={meetings} onReveal={onReveal} reloadMeetings={reloadMeetings} />
       </div>
-      {undos.length > 0 &&
-        createPortal(
-          (() => {
-            const last = undos[undos.length - 1];
-            return (
-              <div className="undo-bar" role="status" key={last.id}>
-                <CircleCheck size={17} className="undo-icon" />
-                <span className="undo-text">
-                  {undos.length > 1 ? `${undos.length} to-dos completed` : 'Completed'} <span className="undo-what">“{last.todo.text}”</span>
-                </span>
-                <button type="button" className="undo-button" onClick={() => void undo(last)}>
-                  <Undo2 size={15} /> Undo <kbd>{isMac ? '⌘Z' : 'Ctrl+Z'}</kbd>
-                </button>
-                <button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setUndos([])}>
-                  <X size={15} />
-                </button>
-                <span className="undo-timer" style={{ animationDuration: `${UNDO_MS}ms` }} />
-              </div>
-            );
-          })(),
-          document.body,
-        )}
     </div>
   );
 }

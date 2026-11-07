@@ -57,7 +57,7 @@ export type Meeting = {
   created_at: string;
   updated_at: string;
 };
-export type Folder = { id: string; name: string; created_at: string };
+export type Folder = { id: string; name: string; color: string | null; icon: string | null; created_at: string };
 export type Device = {
   id: string;
   name: string;
@@ -129,6 +129,7 @@ export type Settings = {
   provider_models: Record<string, string>;
   notes_view: 'write' | 'preview';
   ai_notes_view: 'write' | 'preview';
+  back_behavior: 'up' | 'history';
   api_key_status: Record<string, boolean>;
 };
 export type ChatGPTStatus = {

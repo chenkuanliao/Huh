@@ -84,6 +84,9 @@ class Folder(Base):
     __tablename__ = "folders"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
     name: Mapped[str] = mapped_column(Text)
+    # Appearance only: a palette key and an icon key the client knows how to draw.
+    color: Mapped[str | None] = mapped_column(String, nullable=True)
+    icon: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[float] = mapped_column(Float, default=now)
 
 
@@ -199,6 +202,10 @@ def init():
             c.execute(text("CREATE INDEX IF NOT EXISTS ix_meetings_folder_id ON meetings (folder_id)"))
         if "archived" not in columns:
             c.execute(text("ALTER TABLE meetings ADD COLUMN archived BOOLEAN NOT NULL DEFAULT false"))
+        folder_columns = {col["name"] for col in inspect(c).get_columns("folders")}
+        for col in ("color", "icon"):
+            if col not in folder_columns:
+                c.execute(text(f"ALTER TABLE folders ADD COLUMN {col} VARCHAR"))
         if engine.dialect.name == "postgresql":
             c.execute(
                 text(

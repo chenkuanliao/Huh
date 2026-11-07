@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Archive, ArchiveRestore, BookOpen, Check, ChevronRight, Download, LayoutDashboard, Ellipsis, ExternalLink, Folder as FolderIcon, FolderInput, FolderPlus, Lock, Menu as MenuIcon, Mic, Pencil, Plus, Search, Settings as SettingsIcon, Sparkles, Trash2, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowLeft, BookOpen, Check, ChevronRight, Download, FileAudio, FolderOpen, LayoutDashboard, Ellipsis, ExternalLink, FolderInput, FolderPlus, Lock, Menu as MenuIcon, Mic, Palette, Pencil, Plus, Search, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
 import { api, errorText, Folder, Meeting, send, Settings as SettingsT, Template } from './api';
 import Recorder from './Recorder';
 import Settings, { SettingsSection } from './Settings';
@@ -12,10 +12,25 @@ import { forgetMeeting } from './queue';
 type MeetingRequest = Req & { meetingId: string };
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 import Dashboard from './Dashboard';
+import FolderPage from './FolderPage';
+import { FolderDialog, FolderDraft, FolderGlyph, folderVars, nextFolderColor } from './folders';
 import { Callout, ConfirmDialog, ContextMenu, cx, MenuItem, Modal, Spinner, ToastProvider, useToast } from './ui';
 import './style.css';
 
 type Auth = { authenticated: boolean; setup_required: boolean };
+
+/** Where the user is. Each change is a browser-history entry, so Back (in-app, browser, mouse, Alt+←) retraces it. */
+type View = { page: 'home' } | { page: 'folder'; id: string } | { page: 'meeting'; id: string } | { page: 'settings'; section: SettingsSection };
+/** The page above v: a meeting's folder (if it's filed and not archived), otherwise Home. */
+function parentIn(v: View, meetings: Meeting[], folders: Folder[]): View {
+  if (v.page === 'meeting') {
+    const m = meetings.find(x => x.id === v.id);
+    if (m?.folder_id && !m.archived && folders.some(f => f.id === m.folder_id)) return { page: 'folder', id: m.folder_id };
+  }
+  return { page: 'home' };
+}
+const sameView = (a: View, b: View) =>
+  a.page === b.page && (a.page === 'folder' || a.page === 'meeting' ? a.id === (b as typeof a).id : true);
 
 /** Which sidebar sections are folded away; a per-device convenience. */
 type Folding = { closed: string[]; archiveOpen: boolean };
@@ -102,7 +117,8 @@ function App() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [page, setPage] = useState<'home' | 'meeting' | 'settings'>('home');
+  const [page, setPage] = useState<'home' | 'folder' | 'meeting' | 'settings'>('home');
+  const [folderPage, setFolderPage] = useState<string | null>(null);
   const pageRef = useRef(page);
   pageRef.current = page;
   const [section, setSection] = useState<SettingsSection>('ai');
@@ -113,13 +129,17 @@ function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [creating, setCreating] = useState(false);
   const [views, setViews] = useState<{ notes: 'write' | 'preview'; ai: 'write' | 'preview' }>({ notes: 'write', ai: 'preview' });
+  /** What Back does (Settings → Notes & navigation): "up" a level, or to the previously visited page. */
+  const [backMode, setBackMode] = useState<'up' | 'history'>('up');
+  const backModeRef = useRef(backMode);
+  backModeRef.current = backMode;
   const [menu, setMenu] = useState<{ meeting: Meeting; x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   const [deleting, setDeleting] = useState<Meeting | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [folding, setFolding] = useState<Folding>(readFolding);
-  const [newFolder, setNewFolder] = useState<string | null>(null);
+  const [folderDialog, setFolderDialog] = useState<{ folder: Folder | null } | null>(null);
   const [renamingFolder, setRenamingFolder] = useState<{ id: string; name: string } | null>(null);
   const [folderMenu, setFolderMenu] = useState<{ folder: Folder; x: number; y: number } | null>(null);
   const [deletingFolder, setDeletingFolder] = useState<Folder | null>(null);
@@ -127,20 +147,71 @@ function App() {
   const [movingNew, setMovingNew] = useState('');
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  /** Views by history index, mirroring the browser's entries for this session. */
+  const entries = useRef<View[]>([{ page: 'home' }]);
+  const [histIndex, setHistIndex] = useState(0);
+  const histIndexRef = useRef(0);
+  histIndexRef.current = histIndex;
+  const meetingsRef = useRef<Meeting[] | null>(null);
+  const foldersRef = useRef<Folder[] | null>(null);
   const applySettings = useCallback(
-    (s: SettingsT) => setViews({ notes: s.notes_view === 'preview' ? 'preview' : 'write', ai: s.ai_notes_view === 'write' ? 'write' : 'preview' }),
+    (s: SettingsT) => {
+      setViews({ notes: s.notes_view === 'preview' ? 'preview' : 'write', ai: s.ai_notes_view === 'write' ? 'write' : 'preview' });
+      setBackMode(s.back_behavior === 'history' ? 'history' : 'up');
+    },
     [],
   );
 
-  const reloadMeetings = useCallback(async () => setMeetings(await api<Meeting[]>('/meetings')), []);
+  const reloadMeetings = useCallback(async () => {
+    const list = await api<Meeting[]>('/meetings');
+    meetingsRef.current = list;
+    setMeetings(list);
+  }, []);
   const reloadTemplates = useCallback(async () => setTemplates(await api<Template[]>('/templates')), []);
-  const reloadFolders = useCallback(async () => setFolders(await api<Folder[]>('/folders')), []);
+  const reloadFolders = useCallback(async () => {
+    const list = await api<Folder[]>('/folders');
+    foldersRef.current = list;
+    setFolders(list);
+  }, []);
 
   useEffect(() => {
     try {
       localStorage.setItem(FOLDING_KEY, JSON.stringify(folding));
     } catch {}
   }, [folding]);
+
+  /** Shows a view without touching history. */
+  const show = useCallback((v: View) => {
+    if (v.page === 'meeting') setSelected(v.id);
+    if (v.page === 'folder') setFolderPage(v.id);
+    if (v.page === 'settings') setSection(v.section);
+    setPage(v.page);
+    setDrawer(false);
+  }, []);
+
+  useEffect(() => {
+    window.history.replaceState({ huh: { page: 'home' }, i: 0 }, '');
+    const onPop = (e: PopStateEvent) => {
+      const v: View | undefined = e.state?.huh;
+      const i: number = typeof e.state?.i === 'number' ? e.state.i : 0;
+      let target: View = v || { page: 'home' };
+      // "Up" mode: any back step (browser, mouse, Alt+←, or our button) lands on the parent of the page being left.
+      if (backModeRef.current === 'up' && i < histIndexRef.current) {
+        const leaving = entries.current[histIndexRef.current] || { page: 'home' };
+        target = parentIn(leaving, meetingsRef.current || [], foldersRef.current || []);
+      }
+      // Something deleted since: land on Home instead of a dead page.
+      if (target.page === 'meeting' && meetingsRef.current && !meetingsRef.current.some(m => m.id === (target as { id: string }).id)) target = { page: 'home' };
+      if (target.page === 'folder' && foldersRef.current && !foldersRef.current.some(f => f.id === (target as { id: string }).id)) target = { page: 'home' };
+      if (target !== v) window.history.replaceState({ huh: target, i }, '');
+      entries.current[i] = target;
+      setHistIndex(i);
+      setRequest(null);
+      show(target);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [show]);
 
   useEffect(() => {
     api<Auth>('/auth/status')
@@ -210,11 +281,55 @@ function App() {
       <Login auth={auth} onDone={setAuth} />
     );
 
+  const here = entries.current[histIndex] || { page: 'home' };
+
+  /** Go somewhere new: adds a history entry (or replaces the current one). */
+  function go(v: View, replace = false) {
+    if (!replace && sameView(here, v) && !(v.page === 'settings' && here.page === 'settings' && v.section !== here.section)) {
+      show(v);
+      return;
+    }
+    const i = replace ? histIndex : histIndex + 1;
+    entries.current = [...entries.current.slice(0, i), v];
+    window.history[replace ? 'replaceState' : 'pushState']({ huh: v, i }, '');
+    setHistIndex(i);
+    show(v);
+  }
+
+  /** The page above this one: meeting → its folder → Home. */
+  const parentOf = (v: View) => parentIn(v, meetings, folders);
+
+  function viewLabel(v: View): string {
+    if (v.page === 'home') return 'Home';
+    if (v.page === 'settings') return 'Settings';
+    if (v.page === 'folder') return folders.find(f => f.id === v.id)?.name || 'Folder';
+    return meetings.find(m => m.id === v.id)?.title || 'Untitled meeting';
+  }
+
+  /** Where this page sits: Home › folder › meeting. */
+  function trail(v: View): { label: string; view: View }[] {
+    const out: { label: string; view: View }[] = [{ label: 'Home', view: { page: 'home' } }];
+    const parent = parentOf(v);
+    if (parent.page === 'folder') out.push({ label: viewLabel(parent), view: parent });
+    if (v.page !== 'home') out.push({ label: viewLabel(v), view: v });
+    return out;
+  }
+
+  /** Back one step in history; with no history this session (e.g. after a reload), up to the parent page. */
+  function back() {
+    if (histIndex > 0) window.history.back();
+    else go(parentOf(here), true);
+  }
+
+  /** Leave a page whose subject was just deleted. */
+  function leave() {
+    if (histIndex > 0) window.history.back();
+    else go({ page: 'home' }, true);
+  }
+
   function open(id: string) {
     setRequest(null);
-    setSelected(id);
-    setPage('meeting');
-    setDrawer(false);
+    go({ page: 'meeting', id });
   }
 
   async function newMeeting(title?: string, importAfter = false, folderId?: string) {
@@ -232,18 +347,19 @@ function App() {
     }
   }
 
-  const goHome = () => {
-    setPage('home');
-    setDrawer(false);
-  };
+  const goHome = () => go({ page: 'home' });
 
-  const openSettings = (s: SettingsSection = section) => {
-    setSection(s);
-    setPage('settings');
-    setDrawer(false);
-  };
+  function openFolder(id: string) {
+    go({ page: 'folder', id });
+    setFolding(f => (f.closed.includes(id) ? { ...f, closed: f.closed.filter(x => x !== id) } : f));
+  }
+
+  const openSettings = (s: SettingsSection = section) => go({ page: 'settings', section: s });
+  /** Switching settings sections stays one history entry. */
+  const switchSection = (s: SettingsSection) => go({ page: 'settings', section: s }, true);
 
   const current = meetings.find(m => m.id === selected);
+  const openFolderObj = folders.find(f => f.id === folderPage);
 
   async function rename(id: string, title: string) {
     setRenaming(null);
@@ -264,10 +380,7 @@ function App() {
     try {
       await api(`/meetings/${deleting.id}`, { method: 'DELETE' });
       await forgetMeeting(deleting.id).catch(() => {});
-      if (selected === deleting.id) {
-        setSelected(null);
-        if (page === 'meeting') setPage('home');
-      }
+      if (selected === deleting.id && page === 'meeting') leave();
       toast(`Deleted “${deleting.title || 'Untitled meeting'}”.`);
       setDeleting(null);
       await reloadMeetings();
@@ -321,7 +434,7 @@ function App() {
     const trimmed = label.trim();
     if (!trimmed) return null;
     try {
-      const f = await send<Folder>('/folders', { name: trimmed });
+      const f = await send<Folder>('/folders', { name: trimmed, color: nextFolderColor(folders) });
       await reloadFolders();
       return f;
     } catch (e) {
@@ -342,11 +455,42 @@ function App() {
     }
   }
 
+  /** Create a folder, or save a folder's name, colour and icon, from the folder dialog. */
+  async function saveFolder(draft: FolderDraft) {
+    const editing = folderDialog?.folder;
+    try {
+      if (editing) {
+        await send(`/folders/${editing.id}`, draft, 'PATCH');
+        await reloadFolders();
+      } else {
+        const f = await send<Folder>('/folders', draft);
+        await reloadFolders();
+        toast(`Created “${f.name}”. Drag meetings onto it in the sidebar, or start one inside it.`);
+        openFolder(f.id);
+      }
+      return true;
+    } catch (e) {
+      toast(errorText(e), 'error');
+      return false;
+    }
+  }
+
+  const folderActions = (f: Folder, opts: { open?: boolean; rename?: boolean } = {}): MenuItem[] => [
+    ...(opts.open ? [{ label: 'Open folder', icon: <FolderOpen size={15} />, onSelect: () => openFolder(f.id) }] : []),
+    { label: 'New meeting here', icon: <Plus size={15} />, onSelect: () => void newMeeting(undefined, false, f.id) },
+    { label: 'Import recording here', icon: <FileAudio size={15} />, onSelect: () => void newMeeting(undefined, true, f.id) },
+    { label: 'Customize…', hint: 'Name, colour and icon', icon: <Palette size={15} />, onSelect: () => setFolderDialog({ folder: f }) },
+    ...(opts.rename ? [{ label: 'Rename', icon: <Pencil size={15} />, onSelect: () => setRenamingFolder({ id: f.id, name: f.name }) }] : []),
+    'divider',
+    { label: 'Delete folder…', icon: <Trash2 size={15} />, danger: true, onSelect: () => setDeletingFolder(f) },
+  ];
+
   async function confirmDeleteFolder() {
     if (!deletingFolder) return;
     try {
       await api(`/folders/${deletingFolder.id}`, { method: 'DELETE' });
       toast(`Deleted the folder “${deletingFolder.name}”. Its meetings are back in the main list.`);
+      if (page === 'folder' && folderPage === deletingFolder.id) leave();
       setDeletingFolder(null);
       await Promise.all([reloadFolders(), reloadMeetings()]);
     } catch (e) {
@@ -477,34 +621,10 @@ function App() {
         <nav className="meeting-list" aria-label="Meetings">
           <div className="section-head">
             <span className="group-label">Folders</span>
-            <button type="button" className="icon-button section-add" aria-label="New folder" title="New folder" onClick={() => setNewFolder('')}>
+            <button type="button" className="icon-button section-add" aria-label="New folder" title="New folder" onClick={() => setFolderDialog({ folder: null })}>
               <FolderPlus size={15} />
             </button>
           </div>
-          {newFolder !== null && (
-            <div className="meeting-row renaming">
-              <input
-                autoFocus
-                aria-label="New folder name"
-                placeholder="Folder name"
-                maxLength={200}
-                value={newFolder}
-                onChange={e => setNewFolder(e.target.value)}
-                onBlur={() => {
-                  const value = newFolder;
-                  setNewFolder(null);
-                  void createFolder(value);
-                }}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                  if (e.key === 'Escape') {
-                    setNewFolder('');
-                    (e.target as HTMLInputElement).blur();
-                  }
-                }}
-              />
-            </div>
-          )}
           {folders.map(f => {
             const items = byFolder.get(f.id) || [];
             const isOpen = !folding.closed.includes(f.id);
@@ -534,9 +654,22 @@ function App() {
                       setFolderMenu({ folder: f, x: e.clientX, y: e.clientY });
                     }}
                   >
-                    <button type="button" className={cx('folder-head', isOpen && 'open')} aria-expanded={isOpen} onClick={() => toggleFolder(f.id)}>
-                      <ChevronRight size={14} className="chev" />
-                      <FolderIcon size={15} className="folder-icon" />
+                    <button
+                      type="button"
+                      className={cx('folder-chev', isOpen && 'open')}
+                      aria-expanded={isOpen}
+                      aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${f.name}`}
+                      onClick={() => toggleFolder(f.id)}
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className={cx('folder-head with-chev', page === 'folder' && folderPage === f.id && 'selected')}
+                      style={folderVars(f)}
+                      onClick={() => openFolder(f.id)}
+                    >
+                      <FolderGlyph folder={f} className="folder-icon" />
                       <span className="truncate">{f.name}</span>
                       <span className="count">{items.length || ''}</span>
                     </button>
@@ -621,14 +754,39 @@ function App() {
           <button type="button" className="icon-button" aria-label="Toggle sidebar" onClick={() => setDrawer(d => !d)}>
             <MenuIcon size={20} />
           </button>
-          <span className="truncate">{page === 'settings' ? 'Settings' : page === 'home' ? 'Home' : current?.title || 'huh'}</span>
+          <span className="truncate">{page === 'settings' ? 'Settings' : page === 'home' ? 'Home' : page === 'folder' ? folders.find(f => f.id === folderPage)?.name || 'Folder' : current?.title || 'huh'}</span>
           <button type="button" className="icon-button" aria-label="New meeting (mobile)" onClick={() => void newMeeting()}>
             <Plus size={20} />
           </button>
         </header>
-        <div className="page">
+        <div className={cx('page', page !== 'home' && 'has-nav')}>
+          {page !== 'home' && (
+            <nav className={cx('page-nav', `for-${page}`)} aria-label="Navigation">
+              <button type="button" className="ghost sm back-button" onClick={back} title={`Back (${isMac ? '⌘[' : 'Alt+←'})`}>
+                <ArrowLeft size={16} />
+                <span className="truncate">{viewLabel(backMode === 'history' && histIndex > 0 ? entries.current[histIndex - 1] : parentOf(here))}</span>
+              </button>
+              <span className="page-nav-sep" aria-hidden />
+              <ol className="crumbs">
+                {trail(here).map((c, idx, all) => (
+                  <li key={idx}>
+                    {idx > 0 && <ChevronRight size={13} aria-hidden />}
+                    {idx === all.length - 1 ? (
+                      <span className="truncate" aria-current="page">
+                        {c.label}
+                      </span>
+                    ) : (
+                      <button type="button" className="link" onClick={() => go(c.view)}>
+                        {c.label}
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </nav>
+          )}
           {page === 'settings' ? (
-            <Settings templates={templates} reloadTemplates={reloadTemplates} section={section} onSection={setSection} onSettingsChange={applySettings} />
+            <Settings templates={templates} reloadTemplates={reloadTemplates} section={section} onSection={switchSection} onSettingsChange={applySettings} />
           ) : page === 'meeting' && selected ? (
             <MeetingView
               key={selected}
@@ -638,15 +796,37 @@ function App() {
               onListChanged={() => void reloadMeetings().catch(() => {})}
               onRequestDelete={() => current && setDeleting(current)}
               organize={current ? organizeActions(current) : []}
-              folderName={current ? folderName(current.folder_id) : undefined}
+              folder={current ? folders.find(f => f.id === current.folder_id) : undefined}
+              onOpenFolder={openFolder}
               onUnarchive={() => current && void unarchive(current)}
               onManageTemplates={() => openSettings('templates')}
               views={views}
               request={request?.meetingId === selected ? request : null}
             />
+          ) : page === 'folder' && openFolderObj ? (
+            <FolderPage
+              key={openFolderObj.id}
+              folder={openFolderObj}
+              meetings={byFolder.get(openFolderObj.id) || []}
+              creating={creating}
+              onOpen={open}
+              onReveal={(id, field, line, lineText) => {
+                open(id);
+                setRequest({ meetingId: id, tab: field === 'notes' ? 'notes' : 'enhanced', line, lineText, n: Date.now() });
+              }}
+              onNew={() => void newMeeting(undefined, false, openFolderObj.id)}
+              onImport={() => void newMeeting(undefined, true, openFolderObj.id)}
+              onCustomize={() => setFolderDialog({ folder: openFolderObj })}
+              actions={folderActions(openFolderObj, { rename: false })}
+              reloadMeetings={reloadMeetings}
+            />
           ) : (
             <Dashboard
               meetings={active}
+              folders={folders}
+              onOpenFolder={openFolder}
+              onNewFolder={() => setFolderDialog({ folder: null })}
+              folderActions={f => folderActions(f, { open: true })}
               creating={creating}
               onOpen={open}
               onReveal={(id, field, line, lineText) => {
@@ -690,16 +870,14 @@ function App() {
           onClose={() => setFolderMenu(null)}
           label="Folder actions"
           header={folderMenu && <div className="menu-header truncate">{folderMenu.folder.name}</div>}
-          items={
-            folderMenu
-              ? [
-                  { label: 'New meeting here', icon: <Plus size={15} />, onSelect: () => void newMeeting(undefined, false, folderMenu.folder.id) },
-                  { label: 'Rename', icon: <Pencil size={15} />, onSelect: () => setRenamingFolder({ id: folderMenu.folder.id, name: folderMenu.folder.name }) },
-                  'divider',
-                  { label: 'Delete folder…', icon: <Trash2 size={15} />, danger: true, onSelect: () => setDeletingFolder(folderMenu.folder) },
-                ]
-              : []
-          }
+          items={folderMenu ? folderActions(folderMenu.folder, { open: true, rename: true }) : []}
+        />
+        <FolderDialog
+          open={!!folderDialog}
+          folder={folderDialog?.folder}
+          suggestedColor={nextFolderColor(folders)}
+          onClose={() => setFolderDialog(null)}
+          onSave={saveFolder}
         />
         <ConfirmDialog
           open={!!deletingFolder}
@@ -731,7 +909,7 @@ function App() {
                       void moveTo(moving, f.id);
                     }}
                   >
-                    {f.id ? <FolderIcon size={15} /> : <LayoutDashboard size={15} />}
+                    {f.id ? <FolderGlyph folder={f as Folder} /> : <LayoutDashboard size={15} />}
                     <span className="truncate">{f.name}</span>
                     {here && <Check size={15} className="move-check" />}
                   </button>
