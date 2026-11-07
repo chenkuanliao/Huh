@@ -6,11 +6,12 @@ type Hit = { range?: Range; start?: number; end?: number };
 const MAX_HITS = 5000;
 const supportsHighlights = typeof CSS !== 'undefined' && 'highlights' in CSS && typeof (window as any).Highlight === 'function';
 
-/** The visible find target inside `root`: an element marked `data-find-root` that is currently shown. */
+/** The visible find target inside `root`: an element marked `data-find-root` that is currently shown (the active pane's, if marked). */
 function findTarget(root: HTMLElement | null) {
   if (!root) return null;
-  const candidates = Array.from(root.querySelectorAll<HTMLElement>('[data-find-root]'));
-  return candidates.find(el => el.offsetParent !== null || el.getClientRects().length > 0) ?? null;
+  const candidates = Array.from(root.querySelectorAll<HTMLElement>('[data-find-root]')).filter(el => el.offsetParent !== null || el.getClientRects().length > 0);
+  // With several panes visible (side by side), search the one marked active.
+  return candidates.find(el => el.closest('[data-find-active]')) ?? candidates[0] ?? null;
 }
 
 function visibleTextarea(el: HTMLElement) {
