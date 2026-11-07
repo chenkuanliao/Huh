@@ -141,3 +141,7 @@ Test audio lives in the gitignored `.artifacts/` folder: `jfk.flac` is the publi
 ### Contributing
 
 Work happens on branches and pull requests against `main`. Keep secrets, personal data and machine-specific files out of commits — `.gitignore` already excludes `.env`, `.artifacts/`, `compose.host-gpu.yaml` and local notes.
+
+## License
+
+[MIT](LICENSE) © 2026 Chen-Kuan Liao
