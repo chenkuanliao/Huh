@@ -872,6 +872,9 @@ textarea.mono {
   gap: 12px;
   height: 100dvh;
 }
+.sidebar-resizer {
+  display: none;
+}
 .sidebar-top {
   display: flex;
   align-items: center;
@@ -5102,6 +5105,47 @@ button.meeting-folder:hover {
       margin-left 0.28s var(--ease-out),
       opacity 0.2s ease,
       visibility 0s;
+  }
+  .sidebar {
+    position: relative;
+  }
+  /* Drag the sidebar's right edge to resize it. */
+  .sidebar-resizer {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: -4px;
+    width: 8px;
+    z-index: 5;
+    display: block;
+    cursor: col-resize;
+    touch-action: none;
+    outline: none;
+  }
+  .sidebar-resizer::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 3px;
+    width: 2px;
+    background: var(--accent, var(--line));
+    opacity: 0;
+    transition: opacity 0.15s ease 0.1s;
+  }
+  .sidebar-resizer:hover::after,
+  .sidebar-resizer:focus-visible::after,
+  .app.sidebar-resizing .sidebar-resizer::after {
+    opacity: 1;
+    transition-delay: 0s;
+  }
+  .app.sidebar-resizing,
+  .app.sidebar-resizing * {
+    cursor: col-resize !important;
+    user-select: none;
+  }
+  .app.sidebar-resizing .sidebar {
+    transition: none;
   }
   .app.sidebar-collapsed .sidebar {
     margin-left: calc(-1 * var(--sidebar));
