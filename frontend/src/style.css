@@ -3434,55 +3434,117 @@ textarea.find-active {
 }
 
 /* ============================================================ hidden sources */
+/* Hover only tints the block; right-click → "Show sources" opens an inline panel under it. */
 .markdown .has-source {
+  --src-tint: color-mix(in srgb, var(--accent-soft) 60%, transparent);
   border-radius: 5px;
-  transition: background 0.15s, box-shadow 0.15s;
+  transition: background 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out);
 }
-.markdown .has-source:hover,
+@media (hover: hover) {
+  .markdown .has-source:hover {
+    background: var(--src-tint);
+    box-shadow: -6px 0 0 var(--src-tint), 6px 0 0 var(--src-tint);
+  }
+}
+.markdown .has-source.source-menu,
 .markdown .has-source.source-open {
-  background: color-mix(in srgb, var(--accent-soft) 70%, transparent);
-  box-shadow: -6px 0 0 color-mix(in srgb, var(--accent-soft) 70%, transparent), 6px 0 0 color-mix(in srgb, var(--accent-soft) 70%, transparent);
+  --src-tint: var(--accent-soft);
+  background: var(--src-tint);
+  box-shadow: -6px 0 0 var(--src-tint), 6px 0 0 var(--src-tint), -9px 0 0 var(--accent);
 }
-.source-popover {
-  padding: 0;
+.markdown .source-panel {
+  display: block;
+  margin: 8px 0 14px -9px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--ink-2);
+  white-space: normal;
+  overflow: hidden;
+  animation: source-in 0.22s var(--ease-out);
 }
-.source-card {
-  display: flex;
-  flex-direction: column;
-  padding: 6px;
+.markdown li > .source-panel,
+.markdown td > .source-panel {
+  margin-left: 0;
+}
+@keyframes source-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .markdown .source-panel {
+    animation: none;
+  }
 }
 .source-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 6px 4px 12px;
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
-  padding: 4px 8px 2px;
+  border-bottom: 1px solid var(--line);
+}
+.source-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10.5px;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.source-list {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
 }
 .source-row-item {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
-  padding: 7px 8px;
+  gap: 12px;
+  padding: 8px;
   border-radius: 7px;
   font-size: 13px;
   color: var(--ink-2);
   text-align: left;
 }
-.source-row-item svg {
-  flex-shrink: 0;
-  margin-top: 2px;
-  color: var(--accent);
+.source-row-item + .source-row-item {
+  border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
 }
 button.source-row-item {
   height: auto;
   border: 0;
   background: transparent;
   box-shadow: none;
+  font: inherit;
   font-weight: 400;
   white-space: normal;
   width: 100%;
   justify-content: flex-start;
+  transition: background 0.12s;
+}
+button.source-row-item + button.source-row-item {
+  border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
 }
 button.source-row-item:hover:not(:disabled) {
   background: var(--surface-2);
@@ -3492,18 +3554,55 @@ button.source-row-item:disabled {
   cursor: default;
 }
 .source-when {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 64px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  color: var(--ink);
+}
+.source-when.notes {
+  background: var(--surface-2);
+  color: var(--ink-2);
 }
 .source-quote {
-  color: var(--ink-2);
-  font-size: 12.5px;
-  line-height: 1.45;
+  flex: 1;
+  min-width: 0;
+  padding-top: 2px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.source-rec {
+  display: block;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.source-go {
+  flex-shrink: 0;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+button.source-row-item:hover .source-go,
+button.source-row-item:focus-visible .source-go {
+  opacity: 1;
+}
+@media (hover: none) {
+  .source-go {
+    opacity: 1;
+  }
 }
 
 /* ============================================================ AI versions */

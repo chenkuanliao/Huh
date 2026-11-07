@@ -1,9 +1,9 @@
-import { createContext, ReactNode, useContext, useEffect, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AudioLines, ChevronRight, NotebookPen } from 'lucide-react';
+import { AudioLines, ChevronRight, Copy, NotebookPen, Quote, X } from 'lucide-react';
 import type { Recording, Segment } from './api';
-import { cx, Popover } from './ui';
+import { ContextMenu, cx } from './ui';
 
 const LineContext = createContext<number | null>(null);
 const TASK = /^((?:\s*>)*\s*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\])/;
@@ -36,7 +36,7 @@ function TaskBox({ checked, interactive }: { checked: boolean; interactive: bool
 
 /* --------------------------------------------------------- source lookup */
 
-type HastNode = { type: string; tagName?: string; properties?: Record<string, unknown>; children?: HastNode[] };
+type HastNode = { type: string; tagName?: string; properties?: Record<string, unknown>; children?: HastNode[]; position?: { start: { offset?: number } } };
 const BLOCKS = new Set(['p', 'ul', 'ol', 'li', 'table', 'blockquote', 'pre']);
 
 /** Source tokens attached to this block's own inline content (not nested blocks, which carry their own). */
@@ -72,68 +72,125 @@ function resolve(token: string, info: SourceInfo | null) {
 function SourceCard({ tokens, onClose }: { tokens: string[]; onClose: () => void }) {
   const info = useContext(SourceContext);
   return (
-    <div className="source-card">
-      <div className="source-card-head">Sources</div>
-      {tokens.map(t => {
-        const r = resolve(t, info);
-        if (r.kind === 'notes')
+    <>
+      <div className="source-card-head">
+        <span>
+          Sources <span className="source-count">{tokens.length}</span>
+        </span>
+        <button type="button" className="icon-button sm source-close" aria-label="Hide sources" title="Hide sources (Esc)" onClick={onClose}>
+          <X size={14} />
+        </button>
+      </div>
+      <div className="source-list">
+        {tokens.map(t => {
+          const r = resolve(t, info);
+          if (r.kind === 'notes')
+            return (
+              <div key={t} className="source-row-item">
+                <span className="source-when notes">
+                  <NotebookPen size={12} /> Notes
+                </span>
+                <span className="source-quote">From your written notes</span>
+              </div>
+            );
+          const jump = info?.onJump && r.recording ? () => info.onJump!(r.recording!.id, r.segment?.start ?? r.seconds) : undefined;
           return (
-            <div key={t} className="source-row-item">
-              <NotebookPen size={14} />
-              <span>From your written notes</span>
-            </div>
-          );
-        const jump = info?.onJump && r.recording ? () => (info.onJump!(r.recording!.id, r.segment?.start ?? r.seconds), onClose()) : undefined;
-        return (
-          <button key={t} type="button" className="source-row-item time" disabled={!jump} onClick={jump}>
-            <AudioLines size={14} />
-            <span className="option-text">
+            <button key={t} type="button" className="source-row-item time" disabled={!jump} onClick={jump} title={jump ? 'Open the transcript here' : undefined}>
               <span className="source-when">
-                {r.time}
-                {r.multi && r.recording ? ` · ${r.recording.label}` : ''}
+                <AudioLines size={12} /> {r.time}
               </span>
-              {r.segment && <span className="source-quote">“{r.segment.text}”</span>}
-            </span>
-            {jump && <ChevronRight size={14} className="muted-icon" />}
-          </button>
-        );
-      })}
-    </div>
+              <span className="source-quote">
+                {r.multi && r.recording && <span className="source-rec">{r.recording.label}</span>}
+                {r.segment ? `“${r.segment.text}”` : <span className="muted">No transcript line at this time</span>}
+              </span>
+              {jump && <ChevronRight size={14} className="muted-icon source-go" />}
+            </button>
+          );
+        })}
+      </div>
+    </>
   );
 }
 
-/** A block whose content has sources: shows them in a card on hover (or tap). */
-function SourceBlock({ tag, tokens, className, children, ...props }: { tag: string; tokens: string[]; className?: string; children?: ReactNode } & Record<string, unknown>) {
+/** Which cited block (by source offset) has its sources shown; one at a time per document. */
+const OpenContext = createContext<{ open: string | null; setOpen: (id: string | null) => void } | null>(null);
+
+/**
+ * A block whose content has sources. Hovering only highlights it; right-click (or tap on touch screens)
+ * offers "Show sources", which opens an inline panel right under the block, pushing text down rather than covering it.
+ */
+function SourceBlock({ tag, id, tokens, className, children, ...props }: { tag: string; id: string; tokens: string[]; className?: string; children?: ReactNode } & Record<string, unknown>) {
   const ref = useRef<HTMLElement>(null);
-  const [open, setOpen] = useState(false);
-  const timer = useRef<number | undefined>(undefined);
-  const schedule = (value: boolean, delay: number) => {
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setOpen(value), delay);
+  const panel = useRef<HTMLElement>(null);
+  const state = useContext(OpenContext);
+  const open = state?.open === id;
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const setOpen = (value: boolean) => state?.setOpen(value ? id : null);
+
+  useEffect(() => {
+    if (!open) return;
+    requestAnimationFrame(() => panel.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.isComposing || document.querySelector('.popover')) return;
+      e.stopPropagation();
+      state?.setOpen(null);
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const copy = () => {
+    const selected = window.getSelection()?.toString();
+    const clone = ref.current?.cloneNode(true) as HTMLElement | undefined;
+    clone?.querySelector('.source-panel')?.remove();
+    void navigator.clipboard?.writeText(selected || clone?.textContent?.trim() || '');
   };
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  // Inside list items and table cells the panel lives in the block; after paragraphs and headings it is a sibling.
+  const inside = tag === 'li' || tag === 'td';
+  const Panel = (inside ? 'span' : 'div') as 'div';
+  const sourcePanel = open && (
+    <Panel ref={panel as React.RefObject<HTMLDivElement>} className="source-panel" role="region" aria-label="Sources" contentEditable={false}>
+      <SourceCard tokens={tokens} onClose={() => setOpen(false)} />
+    </Panel>
+  );
   const Tag = tag as 'p';
   return (
     <>
       <Tag
         ref={ref as React.RefObject<HTMLParagraphElement>}
-        className={cx(className, 'has-source', open && 'source-open')}
-        onMouseEnter={() => schedule(true, 280)}
-        onMouseLeave={() => schedule(false, 180)}
+        className={cx(className, 'has-source', open && 'source-open', menu && 'source-menu')}
+        onContextMenu={(e: React.MouseEvent) => {
+          const t = e.target as HTMLElement;
+          // Shift+right-click (and links/inputs) keep the browser menu.
+          if (e.shiftKey || t.closest('a, input, button, .source-panel')) return;
+          e.preventDefault();
+          setMenu({ x: e.clientX, y: e.clientY });
+        }}
         onClick={(e: React.MouseEvent) => {
           const t = e.target as HTMLElement;
-          if (t.closest('a, input, button') || window.getSelection()?.toString()) return;
-          if (matchMedia('(hover: none)').matches) setOpen(o => !o);
+          if (t.closest('a, input, button, .source-panel') || window.getSelection()?.toString()) return;
+          if (matchMedia('(hover: none)').matches) setOpen(!open);
         }}
         {...props}
       >
         {children}
+        {inside && sourcePanel}
       </Tag>
-      <Popover anchor={ref} open={open} onClose={() => setOpen(false)} placement="bottom-start" minWidth={260} maxWidth={380} className="source-popover" role="presentation">
-        <div onMouseEnter={() => window.clearTimeout(timer.current)} onMouseLeave={() => schedule(false, 180)}>
-          <SourceCard tokens={tokens} onClose={() => setOpen(false)} />
-        </div>
-      </Popover>
+      {!inside && sourcePanel}
+      <ContextMenu
+        at={menu}
+        onClose={() => setMenu(null)}
+        label="Note actions"
+        items={[
+          {
+            label: open ? 'Hide sources' : 'Show sources',
+            hint: `${tokens.length} ${tokens.length === 1 ? 'source' : 'sources'}`,
+            icon: <Quote size={15} />,
+            onSelect: () => setOpen(!open),
+          },
+          { label: window.getSelection()?.toString() ? 'Copy selection' : 'Copy text', icon: <Copy size={15} />, onSelect: copy },
+        ]}
+      />
     </>
   );
 }
@@ -149,7 +206,7 @@ function withSources(tag: string) {
         </Tag>
       );
     return (
-      <SourceBlock tag={tag} tokens={tokens} className={className} {...props}>
+      <SourceBlock tag={tag} id={String(node?.position?.start.offset ?? '')} tokens={tokens} className={className} {...props}>
         {children}
       </SourceBlock>
     );
@@ -165,52 +222,58 @@ const LiInner = withSources('li');
 /**
  * GitHub-flavored Markdown (task lists, tables, strikethrough). Raw HTML is not rendered.
  * When `onToggleTask` is given, clicking a checkbox reports its source line.
- * Hidden source markers are never shown; with `sources`, hovering a block reveals them.
+ * Hidden source markers are never shown; with `sources`, right-clicking a cited block offers to show them.
  */
 export default function Markdown({ text, onToggleTask, className, empty, sources }: { text: string; onToggleTask?: (line: number) => void; className?: string; empty?: string; sources?: SourceInfo }) {
   const interactive = !!onToggleTask;
   // Markers become empty fragment links that the renderer hides and blocks pick up.
   const prepared = (text || '').replace(SOURCE_MARKER, (_, body: string) => `[​](#src=${encodeURIComponent(body.replace(/\s+/g, ''))})`);
+  const [open, setOpen] = useState<string | null>(null);
+  // Stable renderers: new component functions on each render would remount every block (and close any open menu).
+  const components = useMemo<Components>(
+    () => ({
+      li: ({ node, children, className: liClass, ...props }) => (
+        <LineContext.Provider value={node?.position?.start.line ?? null}>
+          <LiInner node={node as HastNode} className={cx(liClass, liClass?.includes('task-list-item') && interactive && 'interactive')} {...props}>
+            {children}
+          </LiInner>
+        </LineContext.Provider>
+      ),
+      p: ({ node, ...props }) => <P node={node as HastNode} {...props} />,
+      td: ({ node, ...props }) => <TD node={node as HastNode} {...props} />,
+      h2: ({ node, ...props }) => <H2 node={node as HastNode} {...props} />,
+      h3: ({ node, ...props }) => <H3 node={node as HastNode} {...props} />,
+      input: ({ node, ...props }) => (props.type === 'checkbox' ? <TaskBox checked={!!props.checked} interactive={interactive} /> : <input {...props} />),
+      a: ({ node, href, ...props }) => (href?.startsWith('#src=') ? null : <a href={href} {...props} target="_blank" rel="noreferrer" />),
+    }),
+    [interactive],
+  );
+  const openState = useMemo(() => ({ open, setOpen }), [open]);
   return (
     <SourceContext.Provider value={sources ?? null}>
-      <article
-        className={cx('markdown', className)}
-        onClick={e => {
-          const t = e.target as HTMLElement;
-          if (!onToggleTask || !(t instanceof HTMLInputElement) || t.type !== 'checkbox') return;
-          const line = Number(t.dataset.line);
-          if (line) onToggleTask(line);
-        }}
-        onKeyDown={e => {
-          const t = e.target as HTMLElement;
-          if (onToggleTask && t instanceof HTMLInputElement && t.type === 'checkbox' && (e.key === ' ' || e.key === 'Enter')) {
-            e.preventDefault();
+      <OpenContext.Provider value={openState}>
+        <article
+          className={cx('markdown', className)}
+          onClick={e => {
+            const t = e.target as HTMLElement;
+            if (!onToggleTask || !(t instanceof HTMLInputElement) || t.type !== 'checkbox') return;
             const line = Number(t.dataset.line);
             if (line) onToggleTask(line);
-          }
-        }}
-      >
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            li: ({ node, children, className: liClass, ...props }) => (
-              <LineContext.Provider value={node?.position?.start.line ?? null}>
-                <LiInner node={node as HastNode} className={cx(liClass, liClass?.includes('task-list-item') && interactive && 'interactive')} {...props}>
-                  {children}
-                </LiInner>
-              </LineContext.Provider>
-            ),
-            p: ({ node, ...props }) => <P node={node as HastNode} {...props} />,
-            td: ({ node, ...props }) => <TD node={node as HastNode} {...props} />,
-            h2: ({ node, ...props }) => <H2 node={node as HastNode} {...props} />,
-            h3: ({ node, ...props }) => <H3 node={node as HastNode} {...props} />,
-            input: ({ node, ...props }) => (props.type === 'checkbox' ? <TaskBox checked={!!props.checked} interactive={interactive} /> : <input {...props} />),
-            a: ({ node, href, ...props }) => (href?.startsWith('#src=') ? null : <a href={href} {...props} target="_blank" rel="noreferrer" />),
+          }}
+          onKeyDown={e => {
+            const t = e.target as HTMLElement;
+            if (onToggleTask && t instanceof HTMLInputElement && t.type === 'checkbox' && (e.key === ' ' || e.key === 'Enter')) {
+              e.preventDefault();
+              const line = Number(t.dataset.line);
+              if (line) onToggleTask(line);
+            }
           }}
         >
-          {prepared || (empty ? `*${empty}*` : '')}
-        </ReactMarkdown>
-      </article>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+            {prepared || (empty ? `*${empty}*` : '')}
+          </ReactMarkdown>
+        </article>
+      </OpenContext.Provider>
     </SourceContext.Provider>
   );
 }
