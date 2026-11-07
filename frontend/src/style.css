@@ -2874,6 +2874,181 @@ kbd {
   }
 }
 
+/* To-do panel: ⋯ group/filter menu, filter chips, and grouped sub-cards. */
+.todo-view-button {
+  position: relative;
+  flex-shrink: 0;
+  margin: -4px -6px 0 0;
+}
+.todo-view-button.on {
+  color: var(--accent);
+}
+.todo-view-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.todo-view-popover {
+  max-height: min(560px, calc(100vh - 80px));
+}
+.todo-view-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 12px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.todo-view-section .select-group {
+  padding: 4px 0 0;
+}
+.todo-view-section .segmented {
+  align-self: stretch;
+}
+.todo-view-section .segmented > button {
+  flex: 1;
+}
+.todo-view-filter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px 0 3px;
+}
+.todo-view-list {
+  max-height: 300px;
+}
+.todo-view-option {
+  gap: 8px;
+}
+.todo-view-option .task-box.inline {
+  margin-top: 0;
+}
+.todo-view-option .option-label {
+  flex: 1;
+  min-width: 0;
+}
+.todo-view-count,
+.todo-group-count {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.todo-view-foot {
+  font-size: 12px;
+  color: var(--muted);
+}
+.todo-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: -4px;
+}
+.todo-chips-count {
+  font-size: 12px;
+  color: var(--muted);
+  margin-right: 2px;
+}
+.todo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 180px;
+  height: 24px;
+  padding: 0 3px 0 8px;
+  border-radius: 999px;
+  background: var(--folder-soft, var(--surface-3));
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 550;
+}
+.todo-chip.meeting {
+  background: var(--surface-3);
+}
+.todo-chip button {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.todo-chip button:hover {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink);
+}
+.todo-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.todo-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px 10px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--folder, var(--line-strong));
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.todo-group.closed {
+  padding-bottom: 8px;
+}
+.todo-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  height: auto;
+  min-height: 28px;
+  margin: 0 -6px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  box-shadow: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+}
+.todo-group-head:hover {
+  background: var(--surface-2);
+}
+.todo-group-head strong {
+  min-width: 0;
+  font-weight: 620;
+}
+.todo-group-sub {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.todo-group-count {
+  margin-left: auto;
+}
+.todo-group-chevron {
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+.todo-group.closed .todo-group-chevron {
+  transform: rotate(-90deg);
+}
+.todo-group-more {
+  align-self: flex-start;
+  margin-left: -8px;
+}
+
 /* Undo bar for ticked to-dos: dark like toasts, bottom centre, with a timer that drains. */
 .undo-bar {
   position: fixed;

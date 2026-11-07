@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowRight, AudioLines, CircleAlert, CircleCheck, Clock, Ellipsis, FileAudio, FileText, FolderPlus, ListTodo, Mic, Plus, Sparkles, CalendarDays, Undo2, X } from 'lucide-react';
+import { ArrowRight, AudioLines, ChevronDown, CircleAlert, CircleCheck, Clock, Ellipsis, FileAudio, FileText, FolderPlus, ListTodo, Mic, Plus, Sparkles, CalendarDays, Undo2, X } from 'lucide-react';
 import { api, ApiError, errorText, Folder, Job, Meeting, send, Settings as SettingsT } from './api';
 import { stripSources, toggleTask } from './Markdown';
 import { Callout, cx, Menu, MenuItem, Spinner, useToast } from './ui';
 import { FolderGlyph, FolderTile, folderVars } from './folders';
+import { filterTodos, groupTodos, TodoFilterChips, TodoGroup, TodoViewMenu, useTodoView } from './todoView';
 
 export type MeetingStats = { recorded_seconds: number; recordings: number; segments: number; generations: number };
 type DashJob = Job & { meeting_id: string; meeting_title: string | null };
@@ -194,11 +195,19 @@ export function MeetingRow({
 /** Open checkboxes from the given meetings. Tick to complete (with Undo), or click one to see it in its note. */
 export function TodoPanel({
   meetings,
+  folders,
+  viewKey,
+  groupBy,
   onReveal,
   reloadMeetings,
   description = 'From each meeting’s AI notes, or your own notes when it has none. Tick to complete, or click one to see it in its note.',
 }: {
   meetings: Meeting[];
+  /** Folders to group and filter by; leave out where every meeting is in one folder. */
+  folders?: Folder[];
+  /** Which saved grouping/filter this panel uses (kept per panel in this browser). */
+  viewKey: string;
+  groupBy?: TodoGroup[];
   /** Open a meeting's note at a source line and highlight it. */
   onReveal: (id: string, field: Field, line: number, lineText: string) => void;
   reloadMeetings: () => Promise<void>;
@@ -217,8 +226,23 @@ export function TodoPanel({
   undosRef.current = undos;
   const nextId = useRef(1);
   const returning = useRef(new Set<string>());
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState<Set<string>>(new Set());
   const todos = useMemo(() => collectTodos(meetings), [meetings]);
+  const [view, setView] = useTodoView(viewKey);
+  const allowed = groupBy || (folders ? ['none', 'folder', 'meeting'] : ['none', 'meeting']);
+  const group = allowed.includes(view.group) ? view.group : 'none';
+  const counts = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const t of todos) out.set(t.meeting.id, (out.get(t.meeting.id) || 0) + 1);
+    return out;
+  }, [todos]);
+  const known = useMemo(
+    () => ({
+      folders: new Set([...(folders || []).map(f => f.id), ...(folders ? [''] : [])]),
+      meetings: new Set(meetings.map(m => m.id)),
+    }),
+    [folders, meetings],
+  );
 
   // Forget animation state for to-dos that have left the list (or come back after being unticked elsewhere).
   useEffect(() => {
@@ -353,8 +377,32 @@ export function TodoPanel({
     return () => window.removeEventListener('keydown', onKey);
   }); // Re-bound each render so undo() sees current state.
 
-  const shown = todos.filter(t => !gone.has(t.key));
-  const visibleTodos = showAll ? shown : shown.slice(0, 7);
+  const visible = todos.filter(t => !gone.has(t.key));
+  const filter = filterTodos(visible, view, known);
+  const shown = filter.todos;
+  const groups = groupTodos(shown, group, folders || []);
+  const limit = group === 'none' ? 7 : 5;
+  const toggleSet = (set: Set<string>, key: string) => {
+    const next = new Set(set);
+    if (!next.delete(key)) next.add(key);
+    return next;
+  };
+
+  const row = (t: Todo) => {
+    const done = checked.has(t.key);
+    const source = group === 'meeting' ? (t.field === 'enhanced_notes' ? 'AI notes' : '') : `${t.meeting.title || 'Untitled meeting'}${t.field === 'enhanced_notes' ? ' · AI notes' : ''}`;
+    return (
+      <li key={t.key} ref={el => rowRef(t.key, el)} className={cx(done && 'done')}>
+        <input type="checkbox" className="task-box inline" aria-label={`Complete: ${t.text}`} checked={done} disabled={done} onChange={() => void tick(t)} />
+        <button type="button" className="todo-text" title="Show in the note" disabled={done} onClick={() => onReveal(t.meeting.id, t.field, t.line, t.raw)}>
+          <span className="todo-label">
+            <span>{t.text}</span>
+          </span>
+          {source && <span className="todo-source">{source}</span>}
+        </button>
+      </li>
+    );
+  };
 
   return (
     <>
@@ -364,44 +412,59 @@ export function TodoPanel({
             <h2>Open to-dos</h2>
             <p className="muted">{description}</p>
           </div>
+          <TodoViewMenu view={view} setView={setView} folders={folders} meetings={meetings} counts={counts} groupBy={allowed} />
         </div>
+        {filter.active && (
+          <TodoFilterChips setView={setView} folders={filter.folders} meetings={filter.meetings} folderList={folders || []} meetingList={meetings} shown={shown.length} total={visible.length} />
+        )}
         {shown.length === 0 ? (
-          <p className="hint">Nothing open. Add a checkbox in any note with “- [ ] ”.</p>
+          filter.active && visible.length ? (
+            <p className="hint">Nothing open in what you picked. {visible.length} more open elsewhere.</p>
+          ) : (
+            <p className="hint">Nothing open. Add a checkbox in any note with “- [ ] ”.</p>
+          )
+        ) : group === 'none' ? (
+          <>
+            <ul className="todo-list">{(showAll.has('all') ? shown : shown.slice(0, limit)).map(row)}</ul>
+            {shown.length > limit && (
+              <button type="button" className="ghost sm" onClick={() => setShowAll(s => toggleSet(s, 'all'))}>
+                {showAll.has('all') ? 'Show fewer' : `Show all ${shown.length}`}
+              </button>
+            )}
+          </>
         ) : (
-          <ul className="todo-list">
-            {visibleTodos.map(t => {
-              const done = checked.has(t.key);
+          <div className="todo-groups">
+            {groups.map(g => {
+              const closed = view.collapsed.includes(g.key);
+              const all = showAll.has(g.key);
               return (
-                <li
-                  key={t.key}
-                  ref={el => rowRef(t.key, el)}
-                  className={cx(done && 'done')}
-                >
-                  <input type="checkbox" className="task-box inline" aria-label={`Complete: ${t.text}`} checked={done} disabled={done} onChange={() => void tick(t)} />
+                <div key={g.key} className={cx('todo-group', closed && 'closed')} style={g.folder ? folderVars(g.folder) : undefined}>
                   <button
                     type="button"
-                    className="todo-text"
-                    title="Show in the note"
-                    disabled={done}
-                    onClick={() => onReveal(t.meeting.id, t.field, t.line, t.raw)}
+                    className="todo-group-head"
+                    aria-expanded={!closed}
+                    onClick={() => setView(v => ({ ...v, collapsed: closed ? v.collapsed.filter(k => k !== g.key) : [...v.collapsed, g.key] }))}
                   >
-                    <span className="todo-label">
-                      <span>{t.text}</span>
-                    </span>
-                    <span className="todo-source">
-                      {t.meeting.title || 'Untitled meeting'}
-                      {t.field === 'enhanced_notes' ? ' · AI notes' : ''}
-                    </span>
+                    {g.meeting && !g.folder ? <FileText size={15} className="muted-icon" aria-hidden /> : <FolderGlyph folder={g.folder} size={15} />}
+                    <strong className="truncate">{g.label}</strong>
+                    {g.meeting && g.folder && <span className="todo-group-sub truncate">{g.folder.name}</span>}
+                    <span className="todo-group-count">{g.todos.length}</span>
+                    <ChevronDown size={15} className="todo-group-chevron" aria-hidden />
                   </button>
-                </li>
+                  {!closed && (
+                    <>
+                      <ul className="todo-list">{(all ? g.todos : g.todos.slice(0, limit)).map(row)}</ul>
+                      {g.todos.length > limit && (
+                        <button type="button" className="ghost xs todo-group-more" onClick={() => setShowAll(s => toggleSet(s, g.key))}>
+                          {all ? 'Show fewer' : `Show all ${g.todos.length}`}
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               );
             })}
-          </ul>
-        )}
-        {shown.length > 7 && (
-          <button type="button" className="ghost sm" onClick={() => setShowAll(v => !v)}>
-            {showAll ? 'Show fewer' : `Show all ${shown.length}`}
-          </button>
+          </div>
         )}
       </section>
       {undos.length > 0 &&
@@ -695,7 +758,7 @@ export default function Dashboard({
           )}
         </section>
 
-        <TodoPanel meetings={meetings} onReveal={onReveal} reloadMeetings={reloadMeetings} />
+        <TodoPanel meetings={meetings} folders={folders} viewKey="home" onReveal={onReveal} reloadMeetings={reloadMeetings} />
       </div>
     </div>
   );
