@@ -4,6 +4,7 @@ import { Archive, ArchiveRestore, ArrowLeft, AudioLines, BookA, BookOpen, Check,
 import { api, errorText, Folder, GlossaryEntry, Meeting, send, Settings as SettingsT, Template } from './api';
 import { GlossaryDialog, GlossaryLayer, mergeGlossaries } from './Glossary';
 import Recorder from './Recorder';
+import AINotices from './AINotices';
 import Settings, { SettingsSection } from './Settings';
 import MeetingView, { MeetingRequest as Req, runMeetingCommand } from './Meeting';
 import CommandPalette, { Command, CommandSection } from './CommandPalette';
@@ -1265,6 +1266,7 @@ function App() {
           busy={deleteBusy}
           onConfirm={() => void confirmDelete()}
         />
+        <AINotices />
         <Recorder meeting={selected} meetings={meetings} hideWhenIdle={page !== 'meeting'} onOpenMeeting={open} onChange={() => setRefreshKey(k => k + 1)} />
       </main>
     </div>

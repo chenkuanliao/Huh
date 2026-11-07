@@ -1134,3 +1134,132 @@ def test_glossary_layers_reach_the_generation_prompt(client, monkeypatch):
 
 def test_no_glossary_leaves_prompt_unchanged():
     assert worker.glossary_prompt([]) == "" and worker.glossary_prompt(None) == ""
+
+
+def test_ai_order_settings(client):
+    s = client.get("/api/settings").json()
+    assert s["ai_order"] == [{"provider": "chatgpt", "model": ""}]
+    s = client.put(
+        "/api/settings",
+        json={"ai_order": [
+            {"provider": "chatgpt", "model": "gpt-a"},
+            {"provider": "nvidia", "model": "n-b"},
+            {"provider": "nvidia", "model": "n-b"},
+        ]},
+    ).json()
+    assert s["ai_order"] == [{"provider": "chatgpt", "model": "gpt-a"}, {"provider": "nvidia", "model": "n-b"}]
+    assert (s["provider"], s["model"]) == ("chatgpt", "gpt-a")
+    # Picking a provider directly makes it first; the others stay as backups.
+    s = client.put("/api/settings", json={"provider": "nvidia", "model": "n-b"}).json()
+    assert s["ai_order"] == [{"provider": "nvidia", "model": "n-b"}, {"provider": "chatgpt", "model": "gpt-a"}]
+    assert client.put("/api/settings", json={"ai_order": [{"provider": "nope", "model": "x"}]}).status_code == 422
+    assert client.put("/api/settings", json={"ai_order": "x"}).status_code == 422
+    assert client.put("/api/settings", json={"ai_order": [{"provider": "openai", "model": "m"}] * 1 + [{"provider": "openai", "model": str(i)} for i in range(20)]}).status_code == 422
+
+
+def transcript_meeting(client, texts):
+    mid = meeting(client)
+    r, h = upload(client, mid)
+    client.post(f"/api/recordings/{r['recording_id']}/finish", json={"token": r["token"], "chunk_count": 1})
+    with tx() as s:
+        for i, text in enumerate(texts):
+            s.add(Segment(recording_id=r["recording_id"], start=i, end=i + 1, text=text, raw_text=text, language="en"))
+        s.get(Recording, r["recording_id"]).status = "transcribed"
+        s.execute(delete(Job))
+    return mid
+
+
+def test_generation_falls_back_down_the_ai_order(client, monkeypatch):
+    client.put(
+        "/api/settings",
+        json={"ai_order": [
+            {"provider": "chatgpt", "model": "signed-out"},
+            {"provider": "openai", "model": "gpt-a"},
+            {"provider": "nvidia", "model": "n-b"},
+        ]},
+    )
+    client.put("/api/settings", json={"api_keys": {"openai": "sk-test-a", "nvidia": "nvapi-test-b"}})
+    # Long enough for several reduction steps before the final note.
+    mid = transcript_meeting(client, ["word " * 3000 for _ in range(4)])
+    calls = []
+
+    def infer(cfg, system, prompt):
+        calls.append((cfg["provider"], prompt[:20]))
+        if cfg["provider"] == "chatgpt":
+            raise oauth.OAuthError("Sign in with ChatGPT in Settings first")
+        if cfg["provider"] == "openai" and prompt.startswith("Template"):
+            raise providers.ProviderError("Provider request failed (HTTP 429 — usage_limit)", 429)
+        return "- point [[T1]]"
+
+    monkeypatch.setattr(providers, "infer", infer)
+    client.post(f"/api/meetings/{mid}/generate", json={})
+    worker.process(worker.claim_job())
+    d = client.get(f"/api/meetings/{mid}").json()
+    job = d["jobs"][0]
+    assert job["status"] == "completed"
+    g = d["generations"][0]
+    assert (g["provider"], g["model"]) == ("nvidia", "n-b")
+    # The signed-out model is skipped quietly; the out-of-usage one is announced once.
+    assert len(job["notices"]) == 1
+    n = job["notices"][0]
+    assert n["from"] == {"provider": "openai", "model": "gpt-a"} and n["to"] == {"provider": "nvidia", "model": "n-b"}
+    assert "usage" in n["reason"]
+    # Finished reduction steps are not redone on the backup: only the failed final step moves over.
+    reductions = [c for c in calls if c[0] == "openai" and c[1].startswith("Extract")]
+    assert reductions and not [c for c in calls if c[0] == "nvidia" and c[1].startswith("Extract")]
+    assert [c for c in calls if c[0] == "nvidia"] == [("nvidia", "Template instruction")]
+    with tx() as s:
+        assert "steps" not in s.get(Job, job["id"]).payload
+
+
+def test_generation_resumes_from_checkpoints_after_every_model_failed(client, monkeypatch):
+    client.put("/api/settings", json={"ai_order": [{"provider": "openai", "model": "gpt-a"}, {"provider": "nvidia", "model": "n-b"}]})
+    client.put("/api/settings", json={"api_keys": {"openai": "sk-test-a", "nvidia": "nvapi-test-b"}})
+    mid = transcript_meeting(client, ["word " * 3000 for _ in range(4)])
+    down = {"openai", "nvidia"}
+    calls = []
+
+    def infer(cfg, system, prompt):
+        calls.append(cfg["provider"])
+        if prompt.startswith("Template") and cfg["provider"] in down:
+            raise providers.ProviderError("Provider request failed (HTTP 503)", 503)
+        return "- point [[T1]]"
+
+    monkeypatch.setattr(providers, "infer", infer)
+    client.post(f"/api/meetings/{mid}/generate", json={})
+    worker.process(worker.claim_job())
+    job = client.get(f"/api/meetings/{mid}").json()["jobs"][0]
+    assert job["status"] == "queued" and "No AI model in your order" in job["error"]
+    assert job["notices"][-1]["exhausted"] and job["notices"][0]["to"]["provider"] == "nvidia"
+    reductions = len(calls) - 2
+    down.discard("nvidia")
+    calls.clear()
+    with tx() as s:
+        s.get(Job, job["id"]).available = 0
+    worker.process(worker.claim_job())
+    d = client.get(f"/api/meetings/{mid}").json()
+    assert d["jobs"][0]["status"] == "completed" and reductions > 0
+    # The retry reused every checkpointed reduction: only the final step ran again.
+    assert calls == ["openai", "nvidia"]
+    assert d["generations"][0]["provider"] == "nvidia"
+
+
+def test_provider_failure_kinds():
+    kind = lambda e: providers.failure(e)[0]
+    assert kind(providers.ProviderError("Configure an API key for nvidia")) == "skipped"
+    assert kind(oauth.OAuthError("Sign in with ChatGPT in Settings first")) == "skipped"
+    assert kind(providers.ProviderError("Select a model in Settings first")) == "skipped"
+    assert kind(providers.ProviderError("x", 429)) == "usage"
+    assert kind(providers.ProviderError("Provider response failed — usage limit reached")) == "usage"
+    assert kind(providers.ProviderError("x", 401)) == "auth"
+    assert kind(providers.ProviderError("Provider transport or response format error")) == "other"
+
+
+def test_ai_notices_endpoint(client):
+    mid = meeting(client)
+    with tx() as s:
+        s.add(Job(kind="generate", meeting_id=mid, payload={"notices": [{"at": "x", "reason": "failed"}], "settings": {"api_key": "nope"}}))
+        s.add(Job(kind="generate", meeting_id=mid, payload={}))
+    r = client.get("/api/ai/notices").json()["jobs"]
+    assert len(r) == 1 and r[0]["meeting_title"] == "Review" and r[0]["notices"][0]["reason"] == "failed"
+    assert "settings" not in r[0]
