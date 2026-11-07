@@ -1,3 +1,4 @@
+import type { AIEntry, AINotice } from './aiOrder';
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -105,7 +106,7 @@ export type Generation = {
   notes_revision: number;
   output_language?: string | null;
 };
-export type Job = { id: string; kind: string; status: string; progress: number | null; error?: string | null; created_at: string };
+export type Job = { id: string; kind: string; status: string; progress: number | null; error?: string | null; created_at: string; notices?: AINotice[] };
 export type Detail = Meeting & {
   recordings: Recording[];
   transcript: Segment[];
@@ -138,6 +139,8 @@ export type Settings = {
   ai_notes_view: 'write' | 'preview';
   back_behavior: 'up' | 'history';
   glossary: GlossaryEntry[];
+  /** Ranked models: AI notes use the first one that works and fall back down the list. */
+  ai_order: AIEntry[];
   api_key_status: Record<string, boolean>;
 };
 export type ChatGPTStatus = {

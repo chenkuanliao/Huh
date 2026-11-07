@@ -5787,3 +5787,137 @@ button.glossary-chip.on {
     display: none;
   }
 }
+
+/* ---------------------------------------------------------- AI order (Settings) */
+.ai-order {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ai-order-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  position: relative;
+  transition: transform 0.24s var(--ease-out), box-shadow 0.2s var(--ease-out), border-color 0.15s;
+}
+.ai-order-row.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 30%, var(--surface));
+}
+.ai-order-row.skipped .provider-mark,
+.ai-order-row.skipped .ai-order-main strong,
+.ai-order-row.skipped .ai-order-rank {
+  opacity: 0.5;
+}
+/* The picked-up card floats above the list and follows the pointer. */
+.ai-order-row.dragging {
+  z-index: 2;
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 6px 14px rgba(29, 34, 30, 0.1), 0 22px 44px rgba(29, 34, 30, 0.18);
+  will-change: transform;
+}
+.ai-order.is-dragging .ai-order-row:not(.dragging) {
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-order-row {
+    transition: none;
+  }
+}
+.ai-order.is-dragging,
+.ai-order.is-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+.ai-order-grip {
+  width: 28px;
+  height: 36px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--faint);
+  cursor: grab;
+  touch-action: none;
+  flex-shrink: 0;
+}
+.ai-order-grip:hover,
+.ai-order-grip:focus-visible {
+  color: var(--ink-2);
+  background: var(--surface-2);
+}
+.ai-order-rank {
+  width: 20px;
+  text-align: center;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.ai-order-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ai-order-main strong {
+  font-weight: 600;
+  white-space: nowrap;
+  min-width: 110px;
+}
+.ai-order-main > :last-child {
+  flex: 1;
+  min-width: 0;
+  max-width: 360px;
+}
+.ai-order-status {
+  flex-shrink: 0;
+}
+.ai-order-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+}
+.ai-order-add .grow {
+  flex: 1;
+  min-width: 180px;
+}
+@media (max-width: 640px) {
+  .ai-order-row {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .ai-order-main {
+    order: 5;
+    flex-basis: 100%;
+    padding-left: 38px;
+  }
+  .ai-order-main > :last-child {
+    max-width: none;
+  }
+  .ai-order-row > .provider-mark {
+    margin-right: auto;
+  }
+  .ai-order-main strong {
+    min-width: 0;
+  }
+  .ai-order-wide {
+    display: none;
+  }
+}

@@ -1,4 +1,5 @@
-"""Provider-specific wire formats. No automatic provider or paid fallback."""
+"""Provider-specific wire formats. Falling back to another provider happens only through the
+owner's explicit AI order (Settings.ai_order); never to a provider they did not list."""
 
 import json, re
 from urllib.parse import quote, urlsplit
@@ -19,7 +20,41 @@ BASES = {
 
 
 class ProviderError(RuntimeError):
-    pass
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
+
+
+def order(settings):
+    """The owner's ranked [{provider, model}] list; older settings without one use provider/model."""
+    entries = settings.get("ai_order")
+    if entries:
+        return [{"provider": e["provider"], "model": e.get("model", "")} for e in entries]
+    return [{"provider": settings.get("provider", "chatgpt"), "model": settings.get("model", "")}]
+
+
+def failure(exc):
+    """Why a model could not be used, as (kind, short reason). kind "skipped" means it was never
+    usable (not connected, no model) and is passed over quietly; anything else is announced."""
+    text = str(exc)
+    status = getattr(exc, "status", None)
+    low = text.lower()
+    if (
+        "configure an api key" in low
+        or "sign in with chatgpt" in low
+        or "plan usage was not authorized" in low
+        or "valid provider base url" in low
+    ):
+        return "skipped", "not connected"
+    if "select a model" in low:
+        return "skipped", "no model chosen"
+    if status == 429 or any(w in low for w in ("quota", "usage limit", "rate limit", "insufficient", "credit", "billing")):
+        return "usage", "is out of usage or rate-limited"
+    if status in (401, 403):
+        return "auth", "rejected the sign-in or API key"
+    if status == 404:
+        return "other", "model not found"
+    return "other", "failed"
 
 
 def config(settings):
@@ -83,7 +118,7 @@ def describe(response):
 
 def checked(response):
     if not response.is_success:
-        raise ProviderError(describe(response))
+        raise ProviderError(describe(response), response.status_code)
     return response.json()
 
 
@@ -140,7 +175,7 @@ def infer(settings, system, prompt):
                 complete = False
                 with c.stream("POST", base + "/responses", headers=h, json=body) as r:
                     if not r.is_success:
-                        raise ProviderError(describe(r))
+                        raise ProviderError(describe(r), r.status_code)
                     for line in r.iter_lines():
                         if not line.startswith("data:"):
                             continue

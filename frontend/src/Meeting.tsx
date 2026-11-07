@@ -590,6 +590,13 @@ export default function MeetingView({
                   <span>
                     {JOB_LABEL[j.kind] || j.kind}
                     {j.status === 'queued' ? ' — waiting to start' : j.progress ? ` — ${Math.round(j.progress * 100)}%` : '…'}
+                    {(() => {
+                      // After a fallback, say which backup model is writing now.
+                      const last = j.notices?.[j.notices.length - 1];
+                      if (!last) return null;
+                      if (last.exhausted) return <span className="muted"> · no model in your AI order worked; trying again shortly</span>;
+                      return last.to_label ? <span className="muted"> · using {last.to_label} ({last.from_label} {last.reason})</span> : null;
+                    })()}
                   </span>
                   {j.status === 'running' && !!j.progress && (
                     <span className="progress">

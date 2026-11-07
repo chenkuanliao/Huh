@@ -1032,7 +1032,9 @@ def delete_template(tid: str):
 
 
 def public_settings(s):
-    return settings(s) | {
+    v = settings(s)
+    return v | {
+        "ai_order": ai_order(v),
         "api_key_status": {p: bool(getkv(s, "keys").get(p)) for p in PROVIDERS}
     }
 
@@ -1047,8 +1049,9 @@ def read_settings():
 def write_settings(body: dict):
     with tx() as s:
         v = settings(s)
+        previous = ai_order(v)
         for k in DEFAULTS:
-            if k in ("provider_models", "glossary"):
+            if k in ("provider_models", "glossary", "ai_order"):
                 continue
             if k in body:
                 v[k] = (
@@ -1058,6 +1061,18 @@ def write_settings(body: dict):
                 )
         if v["provider"] not in PROVIDERS:
             fail("Unknown provider", 422)
+        if "ai_order" in body:
+            v["ai_order"] = ai_order_entries(body["ai_order"])
+            if v["ai_order"]:
+                v["provider"], v["model"] = v["ai_order"][0]["provider"], v["ai_order"][0]["model"]
+        elif "provider" in body or "model" in body:
+            # Choosing a provider/model directly makes it the first choice; the rest stay as backups.
+            top = {"provider": v["provider"], "model": v["model"].strip()}
+            rest = [
+                e for e in previous
+                if e != top and not (e["provider"] == top["provider"] and not e["model"])
+            ]
+            v["ai_order"] = ai_order_entries([top] + rest[: AI_ORDER_MAX - 1])
         # Remember the chosen model per provider so switching back restores it.
         remembered = dict(v.get("provider_models") or {})
         if "provider_models" in body:
@@ -1164,6 +1179,32 @@ def download(body: dict):
         fail("Unknown speech model", 422)
     with tx() as s:
         return public(enqueue(s, "download", payload={"model": model}))
+
+
+@app.get("/api/ai/notices")
+def ai_notices():
+    """Recent switches between models in the AI order, for app-wide pop-ups."""
+    with tx() as s:
+        jobs = list(
+            s.scalars(
+                select(Job)
+                .where(Job.kind == "generate", Job.created_at > now() - 86400)
+                .order_by(Job.created_at.desc())
+                .limit(30)
+            )
+        )
+        titles = dict(
+            s.execute(
+                select(Meeting.id, Meeting.title).where(Meeting.id.in_([j.meeting_id for j in jobs]))
+            ).all()
+        )
+        return {
+            "jobs": [
+                {"id": j.id, "meeting_id": j.meeting_id, "meeting_title": titles.get(j.meeting_id), "status": j.status, "notices": public(j)["notices"]}
+                for j in jobs
+                if (j.payload or {}).get("notices")
+            ]
+        }
 
 
 @app.get("/api/jobs/{jid}")

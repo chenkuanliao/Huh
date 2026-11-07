@@ -22,6 +22,13 @@ export type SettingEntry = {
 export const SETTINGS_INDEX: SettingEntry[] = [
   // AI notes
   {
+    id: 'ai-order',
+    section: 'ai',
+    title: 'AI order & backup models',
+    description: 'Rank the models that write your AI notes. If one runs out of usage or stops working, the next one takes over.',
+    keywords: 'fallback backup priority order rank ranking hierarchy failover second next quota limit out of tokens usage drag reorder',
+  },
+  {
     id: 'ai-provider',
     section: 'ai',
     title: 'AI provider',

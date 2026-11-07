@@ -26,7 +26,8 @@ Archive keeps a meeting intact but hides it from the main list and dashboard; it
 MeetingDetail extends Meeting with {recordings:Recording[],transcript:TranscriptSegment[],generations:Generation[],jobs:Job[],recording_state:RecordingState}
 TranscriptSegment {id,recording_id,start:number,end:number,text:string,language?:string}
 Generation {id,content,created_at,provider,model,template_name,notes_revision,output_language?}
-Job {id,kind,status,progress,error?,created_at}
+Job {id,kind,status,progress,error?,created_at,notices?:AINotice[]}
+AINotice {at,from:{provider,model}|null,from_label,reason,to:{provider,model}|null,to_label,exhausted?,final?}: a model in the AI order failed mid-generation and the next one took over (or, with exhausted, none worked)
 Recording {id,meeting_id,device_id?,label,mime_type,status,created_at,duration?,bytes,chunk_count}
 
 ## Recording coordination (polling every 2 seconds, no WebSocket dependency)
@@ -54,9 +55,11 @@ Server monitors heartbeat expiry (~12s) and start timeout (~15s), triggers expli
 Template {id,name,instructions,structure,is_default?}
 - GET /settings -> Settings (no credentials)
 - PUT /settings partial -> Settings. Input may include api_keys object provider->key; blank leaves unchanged; explicit clear via null.
-Settings {provider,model,base_url,system_prompt,output_language,stt_model,stt_language,stt_device,stt_compute_type,traditional_chinese,notes_view,ai_notes_view,back_behavior,glossary,api_key_status:Record<string,boolean>}; back_behavior "up" (default: meeting → its folder → Home) | "history" (previously visited page)
+Settings {provider,model,base_url,system_prompt,output_language,stt_model,stt_language,stt_device,stt_compute_type,traditional_chinese,notes_view,ai_notes_view,back_behavior,glossary,ai_order,api_key_status:Record<string,boolean>}; back_behavior "up" (default: meeting → its folder → Home) | "history" (previously visited page)
 Defaults provider chatgpt, output_language auto, stt_model large-v3-turbo, stt_language mixed (options auto/en/zh/mixed), stt_device cuda, stt_compute_type float16, traditional_chinese true.
-Providers IDs chatgpt/openai/anthropic/google/openrouter/opencode/nvidia/custom. Keep provider adapters and platform-specific parameters; no automatic paid fallback.
+Providers IDs chatgpt/openai/anthropic/google/openrouter/opencode/nvidia/custom. Keep provider adapters and platform-specific parameters; no fallback to any provider the owner did not list.
+AI order: Settings.ai_order is the owner's ranked [{provider,model}] list (≤12, exact duplicates dropped; GET always returns at least one entry, derived from provider/model for older settings). PUT ai_order sets it and provider/model mirror its first entry; PUT provider/model alone moves that pair to the top. Generation runs each inference step on the first entry that works: entries not connected or without a model are skipped quietly; any other provider failure (usage/rate limit, auth, outage, incomplete output) drops that entry for the rest of the attempt and reruns only the failed step, with that step's full context, on the next entry, recording an AINotice on the job. Finished steps are checkpointed on the job (keyed by their prompt) so retries resume; checkpoints are cleared on success. If every entry fails the attempt fails with each entry's reason (normal job retries apply). Generation.provider/model record the model that actually wrote the note.
+- GET /ai/notices -> {jobs:[{id,meeting_id,meeting_title,status,notices}]} generate jobs from the last day that have notices; the client polls it for app-wide pop-ups
 - POST /settings/test {provider?,model?} -> {ok,message}; actual small inference explicitly requested by user
 - GET /models?provider= -> {models:[{id,name}]} (configured provider, may return error when disconnected; editable manual model field supported)
 - GET /stt/models -> {models:[{id,name,downloaded}],device,cuda_available?}

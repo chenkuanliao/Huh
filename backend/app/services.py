@@ -25,7 +25,11 @@ DEFAULTS = dict(
     back_behavior="up",
     # Glossary entries [{term, meaning}] given to the AI for every meeting.
     glossary=[],
+    # Ranked [{provider, model}]: AI notes use the first one that works and fall back down the list.
+    # Empty means "just provider/model" (settings saved before the order existed).
+    ai_order=[],
 )
+AI_ORDER_MAX = 12
 PROVIDERS = {
     "chatgpt",
     "openai",
@@ -83,11 +87,42 @@ def public(obj):
             result[key] = iso(result[key])
     if isinstance(obj, Device):
         result["online"] = now() - obj.last_seen < 12
+    if isinstance(obj, Job):
+        # Fallbacks between models in the owner's AI order, newest last (no provider bodies or secrets).
+        result["notices"] = list((obj.payload or {}).get("notices") or [])[-10:]
     return result
 
 
 def settings(s):
     return DEFAULTS | getkv(s, "settings")
+
+
+def ai_order(v):
+    """The effective ranked AI order: the saved list, or the single provider/model of older settings."""
+    if v.get("ai_order"):
+        return [dict(e) for e in v["ai_order"]]
+    return [{"provider": v.get("provider", "chatgpt"), "model": v.get("model", "")}]
+
+
+def ai_order_entries(value):
+    """Validates [{provider, model}] from a client; drops exact duplicates, keeps the order."""
+    if not isinstance(value, list) or len(value) > AI_ORDER_MAX:
+        fail(f"The AI order is a list of at most {AI_ORDER_MAX} models", 422)
+    out, seen = [], set()
+    for item in value:
+        if not isinstance(item, dict):
+            fail("Invalid AI order entry", 422)
+        p, model = item.get("provider"), item.get("model", "")
+        if p not in PROVIDERS:
+            fail("Unknown provider", 422)
+        if not isinstance(model, str) or len(model) > 1000:
+            fail("Invalid model", 422)
+        model = model.strip()
+        if (p, model) in seen:
+            continue
+        seen.add((p, model))
+        out.append({"provider": p, "model": model})
+    return out
 
 
 GLOSSARY_MAX_ENTRIES = 300

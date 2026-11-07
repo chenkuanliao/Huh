@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AudioLines,
   Check,
@@ -6,11 +6,13 @@ import {
   Cpu,
   Download,
   ExternalLink,
+  GripVertical,
   KeyRound,
   LayoutTemplate,
   LogIn,
   LogOut,
   NotebookPen,
+  Plus,
   RefreshCw,
   Search,
   Sparkles,
@@ -23,6 +25,7 @@ import { OUTPUT_LANGUAGES, PROVIDERS, ProviderInfo, providerInfo, STT_MODELS } f
 import { Badge, Callout, cx, Field, Segmented, Select, Spinner, Switch, useToast } from './ui';
 import Templates from './Templates';
 import { GlossaryPanel } from './Glossary';
+import { activeIndex, AIEntry, entryProblem, moveEntry, sameEntry, setProviderModel } from './aiOrder';
 import { searchSettings, SECTION_LABELS, SettingEntry, SettingMatch, SettingsSection } from './settingsSearch';
 
 export type { SettingsSection };
@@ -306,10 +309,11 @@ function AISettings({ settings, save }: { settings: SettingsT; save: Save }) {
     refreshChatgpt().catch(() => {});
   }, [refreshChatgpt]);
 
+  /** undefined while ChatGPT's sign-in state is still loading. */
   const connected = useCallback(
-    (p: string) => {
+    (p: string): boolean | undefined => {
       const i = providerInfo(p);
-      if (i.auth === 'chatgpt') return !!chatgpt?.signed_in;
+      if (i.auth === 'chatgpt') return chatgpt ? !!chatgpt.signed_in : undefined;
       if (i.auth === 'custom') return !!settings.base_url;
       return !!settings.api_key_status?.[p];
     },
@@ -329,77 +333,85 @@ function AISettings({ settings, save }: { settings: SettingsT; save: Save }) {
   }, []);
 
   // Load the model list automatically as soon as a provider is connected.
-  const isConnected = connected(viewing);
+  const isConnected = !!connected(viewing);
   useEffect(() => {
     if (isConnected && !models[viewing]) void loadModels(viewing);
   }, [viewing, isConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The active provider is connected but has no model yet: pick the first available one automatically.
-  const autoPicked = useRef(false);
-  const activeList = models[settings.provider]?.models;
-  useEffect(() => {
-    if (autoPicked.current || settings.model || !activeList?.length || !connected(settings.provider)) return;
-    autoPicked.current = true;
-    void save({ provider: settings.provider, model: activeList[0].id }, `AI notes will use ${activeList[0].id}. You can change it below.`).catch(() => {});
-  }, [activeList, settings.model, settings.provider, connected, save]);
-  useEffect(() => {
-    if (connected(settings.provider) && !models[settings.provider]) void loadModels(settings.provider);
-  }, [settings.provider, chatgpt]); // eslint-disable-line react-hooks/exhaustive-deps
+  const order: AIEntry[] = useMemo(
+    () => (settings.ai_order?.length ? settings.ai_order : [{ provider: settings.provider, model: settings.model }]),
+    [settings.ai_order, settings.provider, settings.model],
+  );
+  const saveOrder = useCallback((next: AIEntry[], message?: string) => save({ ai_order: next }, message), [save]);
+  const rankOf = (p: string) => order.findIndex(e => e.provider === p);
+  const modelFor = (p: string) => order.find(e => e.provider === p)?.model || settings.provider_models?.[p] || '';
 
-  const modelFor = (p: string) => settings.provider_models?.[p] || (settings.provider === p ? settings.model : '');
+  // A connected provider in the order has no model yet: pick its first available model automatically.
+  const autoPicked = useRef(new Set<string>());
+  useEffect(() => {
+    const i = order.findIndex(e => !e.model && connected(e.provider) && models[e.provider]?.models?.length && !autoPicked.current.has(e.provider));
+    if (i < 0) return;
+    const e = order[i];
+    autoPicked.current.add(e.provider);
+    const model = settings.provider_models?.[e.provider] || models[e.provider].models[0].id;
+    void saveOrder(
+      order.map((x, j) => (j === i ? { ...x, model } : x)).filter((x, j, all) => all.findIndex(y => sameEntry(x, y)) === j),
+      `${providerInfo(e.provider).name} will use ${model}. You can change it in the list.`,
+    ).catch(() => {});
+  }, [order, models, connected, saveOrder, settings.provider_models]);
 
   async function chooseModel(p: string, model: string) {
-    await save({ provider: p, model }, `AI notes will use ${model} via ${providerInfo(p).name}.`);
+    const next = setProviderModel(order, p, model);
+    if (next) await saveOrder(next, `${providerInfo(p).name} will use ${model}.`);
+    else await save({ provider_models: { [p]: model } }, `Saved. Add ${providerInfo(p).name} to your order to use it.`);
   }
 
-  async function activate(p: string) {
+  async function addToOrder(p: string) {
     let model = modelFor(p);
     if (!model) {
       const list = models[p]?.models?.length ? models[p].models : await loadModels(p);
       model = list?.[0]?.id || '';
     }
-    await save({ provider: p, model }, `${providerInfo(p).name} is now writing your AI notes.`);
+    await saveOrder([...order, { provider: p, model }], `${providerInfo(p).name} added as #${order.length + 1}.`);
   }
 
-  // After connecting: pick a sensible model automatically if none is chosen yet.
+  // After connecting: give the provider a model, and add it to the order (first if nothing else works).
   async function afterConnect(p: string) {
     const list = await loadModels(p);
     if (list === null) return;
-    const current = modelFor(p);
-    const model = current || list[0]?.id || '';
-    if (settings.provider === p || !connected(settings.provider)) {
-      await save({ provider: p, model });
-      toast(`${providerInfo(p).name} connected${model ? ` — using ${model}` : ''}.`, 'success');
+    const model = modelFor(p) || list[0]?.id || '';
+    const name = providerInfo(p).name;
+    const at = rankOf(p);
+    if (at >= 0) {
+      if (!order[at].model && model) await saveOrder(order.map((e, i) => (i === at ? { ...e, model } : e)));
+      toast(`${name} connected — #${at + 1} in your order.`, 'success');
+    } else if (activeIndex(order, connected) < 0) {
+      // Nothing in the order works yet: this provider becomes the first choice.
+      const rest = order.filter(e => e.model);
+      await saveOrder([{ provider: p, model }, ...rest]);
+      toast(`${name} connected${model ? ` — using ${model}` : ''}.`, 'success');
     } else {
-      toast(`${providerInfo(p).name} connected. Pick a model to start using it.`, 'success');
+      await saveOrder([...order, { provider: p, model }]);
+      toast(`${name} connected and added as backup #${order.length + 1}. Drag it to change the order.`, 'success');
     }
   }
 
-  const active = providerInfo(settings.provider);
 
   return (
     <div className="stack-lg">
+      <AIOrderPanel order={order} connected={connected} models={models} loadModels={loadModels} onChange={saveOrder} />
+
       <section className="panel" data-setting="ai-provider">
         <div className="panel-head">
           <div>
-            <h2>Who writes your AI notes</h2>
-            <p className="muted">
-              Currently <strong>{active.name}</strong>
-              {settings.model ? (
-                <>
-                  {' '}
-                  · <code>{settings.model}</code>
-                </>
-              ) : (
-                ' · no model selected'
-              )}
-              {!connected(settings.provider) && <span className="warn-text"> · not connected</span>}
-            </p>
+            <h2>Providers</h2>
+            <p className="muted">Connect the services you want in your order. Pick one to set it up.</p>
           </div>
         </div>
         <div className="provider-grid">
           {PROVIDERS.map(p => {
-            const isActive = settings.provider === p.id;
+            const rank = rankOf(p.id);
+            const isActive = rank >= 0;
             const ok = connected(p.id);
             return (
               <button
@@ -416,9 +428,7 @@ function AISettings({ settings, save }: { settings: SettingsT; save: Save }) {
                 </span>
                 <span className="provider-card-status">
                   {isActive ? (
-                    <Badge tone="accent">
-                      <Check size={12} /> In use
-                    </Badge>
+                    <Badge tone={ok === false ? 'warn' : 'accent'}>#{rank + 1}{ok === false ? ' · not connected' : ''}</Badge>
                   ) : ok ? (
                     <Badge tone="good">Connected</Badge>
                   ) : (
@@ -440,13 +450,13 @@ function AISettings({ settings, save }: { settings: SettingsT; save: Save }) {
               <p className="muted">{info.tagline}</p>
             </div>
           </div>
-          {settings.provider === info.id ? (
+          {rankOf(info.id) >= 0 ? (
             <Badge tone="accent">
-              <Check size={12} /> Writing your AI notes
+              <Check size={12} /> #{rankOf(info.id) + 1} in your order
             </Badge>
           ) : (
-            <button type="button" className="primary" disabled={!isConnected} title={isConnected ? undefined : 'Connect first'} onClick={() => void activate(info.id).catch(() => {})}>
-              Use {info.name}
+            <button type="button" className="primary" disabled={!isConnected || order.length >= 12} title={isConnected ? undefined : 'Connect first'} onClick={() => void addToOrder(info.id).catch(() => {})}>
+              <Plus size={15} /> Add to order
             </button>
           )}
         </div>
@@ -1194,6 +1204,320 @@ function NotesSettings({ settings, save }: { settings: SettingsT; save: Save }) 
           ))}
         </dl>
       </section>
+    </div>
+  );
+}
+
+/* ======================================================== AI order */
+
+const PROBLEM_TEXT = {
+  'not-connected': (
+    <>
+      Not connected<span className="ai-order-wide"> — skipped</span>
+    </>
+  ),
+  'no-model': 'Pick a model',
+} as const;
+
+function AIOrderPanel({
+  order,
+  connected,
+  models,
+  loadModels,
+  onChange,
+}: {
+  order: AIEntry[];
+  connected: (p: string) => boolean | undefined;
+  models: Record<string, ModelList>;
+  loadModels: (p: string) => Promise<unknown>;
+  onChange: (order: AIEntry[], message?: string) => Promise<unknown>;
+}) {
+  // While dragging, the picked-up card follows the pointer and the others slide out of its way.
+  // On release the new order shows at once (draft) and is saved; it stays until the save finishes.
+  const [draft, setDraft] = useState<AIEntry[] | null>(null);
+  const [drag, setDrag] = useState<{ from: number; to: number; dy: number; step: number } | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  const rows = useRef<(HTMLLIElement | null)[]>([]);
+  /** Where each card was on screen just before a reorder, so it can glide to its new slot (FLIP). */
+  const flipFrom = useRef<Map<string, number> | null>(null);
+  const list = draft || order;
+  const active = activeIndex(list, connected);
+  const key = (e: AIEntry) => `${e.provider}|${e.model}`;
+
+  // Load model lists for every connected provider in the order, for the per-row model menus.
+  useEffect(() => {
+    for (const p of new Set(order.map(e => e.provider))) if (connected(p) && !models[p]) void loadModels(p);
+  }, [order, connected]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!focusKey) return;
+    document.querySelector<HTMLElement>(`[data-ai-grip="${CSS.escape(focusKey)}"]`)?.focus();
+    setFocusKey(null);
+  }, [focusKey, order]);
+
+  const remember = () => {
+    const at = new Map<string, number>();
+    rows.current.forEach((row, i) => row && list[i] && at.set(key(list[i]), row.getBoundingClientRect().top));
+    flipFrom.current = at;
+  };
+
+  // Glide every card from where it was to where it now is.
+  useLayoutEffect(() => {
+    const from = flipFrom.current;
+    if (!from) return;
+    flipFrom.current = null;
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    list.forEach((e, i) => {
+      const row = rows.current[i];
+      const was = from.get(key(e));
+      if (!row || was === undefined) return;
+      const delta = was - row.getBoundingClientRect().top;
+      if (Math.abs(delta) < 1) return;
+      row.style.transition = 'none';
+      row.style.transform = `translateY(${delta}px)`;
+      void row.offsetHeight;
+      row.style.transition = '';
+      row.style.transform = '';
+    });
+  }, [list]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function commit(next: AIEntry[]) {
+    if (next.every((e, i) => order[i] && key(order[i]) === key(e))) {
+      setDraft(null);
+      return;
+    }
+    const top = activeIndex(next, connected);
+    const before = activeIndex(order, connected);
+    const msg = top >= 0 && (before < 0 || key(next[top]) !== key(order[before])) ? `${providerInfo(next[top].provider).name} · ${next[top].model} now writes your AI notes.` : 'Order saved.';
+    setDraft(next);
+    void onChange(next, msg)
+      .catch(() => {})
+      .finally(() => setDraft(null));
+  }
+
+  function startDrag(e: React.PointerEvent, from: number) {
+    if (e.button !== 0 || drag) return;
+    e.preventDefault();
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {}
+    const rects = rows.current.slice(0, list.length).map(r => r!.getBoundingClientRect());
+    const gap = rects.length > 1 ? rects[1].top - rects[0].bottom : 6;
+    const step = rects[from].height + gap;
+    const minDy = rects[0].top - rects[from].top;
+    const maxDy = rects[rects.length - 1].bottom - rects[from].bottom;
+    const startY = e.clientY;
+    let to = from;
+    setDrag({ from, to, dy: 0, step });
+    const move = (ev: PointerEvent) => {
+      const dy = Math.max(minDy - 12, Math.min(maxDy + 12, ev.clientY - startY));
+      // The slot whose middle the dragged card's middle has passed.
+      const mid = rects[from].top + rects[from].height / 2 + dy;
+      to = rects.filter((r, i) => i !== from && r.top + r.height / 2 < mid).length;
+      setDrag({ from, to, dy, step });
+    };
+    const end = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      // Glide from where the card was dropped (and where the others had slid) into the final order.
+      remember();
+      setDrag(null);
+      commit(moveEntry(list, from, to));
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+  }
+
+  /** Inline transform for a row while a card is being dragged. */
+  function dragStyle(i: number): React.CSSProperties | undefined {
+    if (!drag) return undefined;
+    if (i === drag.from) return { transform: `translateY(${drag.dy}px) scale(1.02)`, transition: 'none' };
+    if (drag.from < drag.to && i > drag.from && i <= drag.to) return { transform: `translateY(${-drag.step}px)` };
+    if (drag.to < drag.from && i >= drag.to && i < drag.from) return { transform: `translateY(${drag.step}px)` };
+    return { transform: 'translateY(0)' };
+  }
+
+  function nudge(e: React.KeyboardEvent, index: number) {
+    const to = e.key === 'ArrowUp' ? index - 1 : e.key === 'ArrowDown' ? index + 1 : e.key === 'Home' ? 0 : e.key === 'End' ? list.length - 1 : null;
+    if (to === null) return;
+    e.preventDefault();
+    const next = moveEntry(order, index, to);
+    if (next === order) return;
+    setFocusKey(key(order[index]));
+    remember();
+    commit(next);
+  }
+
+  function setModel(index: number, model: string) {
+    const next = order.map((e, i) => (i === index ? { ...e, model } : e));
+    if (next.some((e, i) => i !== index && sameEntry(e, next[index]))) {
+      void onChange(next.filter((e, i) => i === index || !sameEntry(e, next[index])), 'Order saved.').catch(() => {});
+      return;
+    }
+    void onChange(next, 'Model updated.').catch(() => {});
+  }
+
+  return (
+    <section className="panel" data-setting="ai-order">
+      <div className="panel-head">
+        <div>
+          <h2>Who writes your AI notes</h2>
+          <p className="muted">
+            AI notes use the first model that works. If it runs out of usage, gets signed out or fails, the next one takes over — picking up from the step that failed, with everything that step needs. Drag to
+            reorder.
+          </p>
+        </div>
+      </div>
+      {active < 0 && list.length > 0 && <Callout tone="bad">None of these can write notes right now. Connect a provider below, or pick a model for one of them.</Callout>}
+      <ol className={cx('ai-order', drag && 'is-dragging')}>
+        {list.map((e, i) => {
+          const info = providerInfo(e.provider);
+          const problem = entryProblem(e, connected(e.provider));
+          const ml = models[e.provider];
+          const options = (ml?.models || []).map(m => ({ value: m.id, label: m.name && m.name !== m.id ? m.name : m.id, description: m.name && m.name !== m.id ? m.id : undefined }));
+          if (e.model && !options.some(o => o.value === e.model)) options.unshift({ value: e.model, label: e.model, description: undefined });
+          return (
+            <li
+              key={key(e)}
+              ref={el => {
+                rows.current[i] = el;
+              }}
+              className={cx('ai-order-row', drag?.from === i && 'dragging', problem && 'skipped', i === active && 'active')}
+              style={dragStyle(i)}
+            >
+              <button
+                type="button"
+                className="ai-order-grip"
+                data-ai-grip={key(e)}
+                aria-label={`Move ${info.name}${e.model ? ` · ${e.model}` : ''}, number ${i + 1}. Drag, or use the arrow keys.`}
+                title="Drag to reorder"
+                onPointerDown={ev => startDrag(ev, i)}
+                onKeyDown={ev => nudge(ev, i)}
+              >
+                <GripVertical size={16} />
+              </button>
+              <span className="ai-order-rank">{i + 1}</span>
+              <ProviderMark info={info} />
+              <div className="ai-order-main">
+                <strong>{info.name}</strong>
+                <Select
+                  size="sm"
+                  ariaLabel={`${info.name} model`}
+                  value={e.model}
+                  options={options}
+                  onChange={m => setModel(i, m)}
+                  searchable
+                  allowCustom
+                  customLabel={q => `Use model ID “${q}”`}
+                  loading={ml?.loading}
+                  placeholder={ml?.loading ? 'Loading models…' : 'Choose a model'}
+                  emptyText={connected(e.provider) === false ? `Connect ${info.name} to load its models, or type a model ID.` : 'No models found. Type a model ID to use it anyway.'}
+                />
+              </div>
+              <span className="ai-order-status">
+                {problem ? <Badge tone="warn">{PROBLEM_TEXT[problem]}</Badge> : i === active ? <Badge tone="accent">In use</Badge> : <Badge>Backup</Badge>}
+              </span>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`Remove ${info.name}${e.model ? ` · ${e.model}` : ''} from the order`}
+                title="Remove"
+                disabled={order.length <= 1}
+                onClick={() => void onChange(order.filter((_, j) => j !== i), `${info.name}${e.model ? ` · ${e.model}` : ''} removed from the order.`).catch(() => {})}
+              >
+                <X size={15} />
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+      {adding ? (
+        <AddAIEntry
+          order={order}
+          connected={connected}
+          models={models}
+          loadModels={loadModels}
+          onCancel={() => setAdding(false)}
+          onAdd={entry =>
+            onChange([...order, entry], `${providerInfo(entry.provider).name} · ${entry.model} added as #${order.length + 1}.`)
+              .then(() => setAdding(false))
+              .catch(() => {})
+          }
+        />
+      ) : (
+        <div>
+          <button type="button" className="ghost sm" disabled={order.length >= 12} onClick={() => setAdding(true)}>
+            <Plus size={14} /> Add a backup model
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AddAIEntry({
+  order,
+  connected,
+  models,
+  loadModels,
+  onAdd,
+  onCancel,
+}: {
+  order: AIEntry[];
+  connected: (p: string) => boolean | undefined;
+  models: Record<string, ModelList>;
+  loadModels: (p: string) => Promise<unknown>;
+  onAdd: (e: AIEntry) => void;
+  onCancel: () => void;
+}) {
+  const firstConnected = PROVIDERS.find(p => connected(p.id))?.id || PROVIDERS[0].id;
+  const [provider, setProvider] = useState(firstConnected);
+  const [model, setModel] = useState('');
+  const ml = models[provider];
+  useEffect(() => {
+    setModel('');
+    if (connected(provider) && !models[provider]) void loadModels(provider);
+  }, [provider]); // eslint-disable-line react-hooks/exhaustive-deps
+  const options = (ml?.models || []).map(m => ({
+    value: m.id,
+    label: m.name && m.name !== m.id ? m.name : m.id,
+    description: m.name && m.name !== m.id ? m.id : undefined,
+    disabled: order.some(e => sameEntry(e, { provider, model: m.id })),
+  }));
+  const duplicate = order.some(e => sameEntry(e, { provider, model }));
+  return (
+    <div className="ai-order-add">
+      <Select
+        size="sm"
+        ariaLabel="Provider to add"
+        value={provider}
+        options={PROVIDERS.map(p => ({ value: p.id, label: p.name, description: connected(p.id) ? 'Connected' : 'Not connected yet', icon: <ProviderMark info={p} /> }))}
+        onChange={setProvider}
+      />
+      <div className="grow">
+        <Select
+          size="sm"
+          ariaLabel="Model to add"
+          value={model}
+          options={options}
+          onChange={setModel}
+          searchable
+          allowCustom
+          customLabel={q => `Use model ID “${q}”`}
+          loading={ml?.loading}
+          placeholder={ml?.loading ? 'Loading models…' : 'Choose a model'}
+          emptyText={connected(provider) ? 'No models found. Type a model ID to use it anyway.' : `Connect ${providerInfo(provider).name} below to load its models, or type a model ID.`}
+        />
+      </div>
+      <button type="button" className="primary sm" disabled={!model.trim() || duplicate} title={duplicate ? 'Already in the order' : undefined} onClick={() => onAdd({ provider, model: model.trim() })}>
+        Add
+      </button>
+      <button type="button" className="ghost sm" onClick={onCancel}>
+        Cancel
+      </button>
     </div>
   );
 }
