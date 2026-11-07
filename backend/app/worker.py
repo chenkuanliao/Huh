@@ -414,6 +414,24 @@ def language_rule(choice, traditional, texts):
     return rule
 
 
+def glossary_prompt(entries):
+    """User-defined terms for the system prompt, so every inference step (including the
+    reduction of long transcripts) recognises them."""
+    if not entries:
+        return ""
+    lines = []
+    for e in entries:
+        meaning = " ".join(e.get("meaning", "").split())
+        lines.append(f"- {e['term']}" + (f": {meaning}" if meaning else ""))
+    return (
+        "\nGLOSSARY (names, terms, acronyms and spellings the user defined): use it to recognise these words "
+        "when the transcript mishears, misspells or abbreviates them, and write them as spelled here. "
+        "It is background knowledge, not meeting content: never add glossary facts the meeting did not discuss.\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
 def generate_job(job):
     p = job.payload
     cfg = p["settings"]
@@ -427,6 +445,7 @@ def generate_job(job):
             [x["text"] for x in p["transcript"]] + [p["notes"]],
         )
         + cfg["system_prompt"]
+        + glossary_prompt(p.get("glossary"))
     )
     refs = {}
     lines = []

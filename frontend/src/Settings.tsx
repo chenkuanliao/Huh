@@ -22,6 +22,7 @@ import { api, ChatGPTStatus, errorText, send, Settings as SettingsT, SttModels, 
 import { OUTPUT_LANGUAGES, PROVIDERS, ProviderInfo, providerInfo, STT_MODELS } from './providers';
 import { Badge, Callout, cx, Field, Segmented, Select, Spinner, Switch, useToast } from './ui';
 import Templates from './Templates';
+import { GlossaryPanel } from './Glossary';
 import { searchSettings, SECTION_LABELS, SettingEntry, SettingMatch, SettingsSection } from './settingsSearch';
 
 export type { SettingsSection };
@@ -481,6 +482,18 @@ function AISettings({ settings, save }: { settings: SettingsT; save: Save }) {
       </section>
 
       <WritingStyle settings={settings} save={save} />
+      <section className="panel" data-setting="ai-glossary">
+        <div className="panel-head">
+          <div>
+            <h2>Glossary</h2>
+            <p className="muted">
+              Names, terms, acronyms and spellings the AI should know in every meeting, even when you don’t write them in your notes. It uses them to recognise misheard words and spell them
+              right. Folders and single meetings can add their own from their page.
+            </p>
+          </div>
+        </div>
+        <GlossaryPanel entries={settings.glossary || []} onSave={glossary => save({ glossary }, 'Glossary saved.')} />
+      </section>
     </div>
   );
 }

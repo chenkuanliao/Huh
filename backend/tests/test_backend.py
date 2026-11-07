@@ -1091,3 +1091,46 @@ def test_archived_meetings_rank_last_in_search(client):
     assert client.get(f"/api/meetings/{old}").json()["notes"] == "roadmap draft"
     client.patch(f"/api/meetings/{old}", json={"archived": False})
     assert client.get("/api/search", params={"q": "roadmap"}).json()["results"][0]["meeting_id"] == old
+
+
+def test_glossary_layers_reach_the_generation_prompt(client, monkeypatch):
+    fid = client.post("/api/folders", json={"name": "Lab"}).json()["id"]
+    mid = meeting(client)
+    # Each level validates and trims; blank rows are dropped.
+    assert client.put("/api/settings", json={"glossary": [{"term": " Huh ", "meaning": "our notebook app"}, {"term": "", "meaning": ""}]}).json()["glossary"] == [
+        {"term": "Huh", "meaning": "our notebook app"}
+    ]
+    f = client.patch(f"/api/folders/{fid}", json={"glossary": [{"term": "K-Lab", "meaning": "often heard as 'cay lab'"}, {"term": "huh", "meaning": "the lab's fork"}]}).json()
+    assert [e["term"] for e in f["glossary"]] == ["K-Lab", "huh"]
+    before = client.get(f"/api/meetings/{mid}").json()["updated_at"]
+    m = client.patch(f"/api/meetings/{mid}", json={"folder_id": fid, "glossary": [{"term": "QBR", "meaning": "quarterly business review"}]}).json()
+    assert m["glossary"] == [{"term": "QBR", "meaning": "quarterly business review"}]
+    assert m["updated_at"] == before  # context is organisation, not an edit
+    for bad in ["nope", [{"term": 3}], [{"term": "", "meaning": "orphan"}], [{"term": "x" * 201}], [{"term": "t"}] * 301]:
+        assert client.patch(f"/api/meetings/{mid}", json={"glossary": bad}).status_code == 422
+    assert client.get("/api/folders").json()[0]["glossary"][0]["term"] == "K-Lab"
+
+    r, h = upload(client, mid)
+    client.post(f"/api/recordings/{r['recording_id']}/finish", json={"token": r["token"], "chunk_count": 1})
+    with tx() as s:
+        s.add(Segment(recording_id=r["recording_id"], start=1, end=2, text="cay lab QBR", raw_text="cay lab QBR", language="en"))
+        s.get(Recording, r["recording_id"]).status = "transcribed"
+        s.execute(delete(Job))
+    client.post(f"/api/meetings/{mid}/generate", json={})
+    seen = {}
+
+    def infer(cfg, system, prompt):
+        seen.update(system=system)
+        return "- K-Lab QBR [[T1]]"
+
+    monkeypatch.setattr(providers, "infer", infer)
+    worker.generate_job(worker.claim_job())
+    system = seen["system"]
+    assert "GLOSSARY" in system and "- QBR: quarterly business review" in system
+    assert "- K-Lab: often heard as 'cay lab'" in system
+    # The folder's "huh" replaces the all-notes "Huh" (case-insensitive), not both.
+    assert "- huh: the lab's fork" in system and "our notebook app" not in system
+
+
+def test_no_glossary_leaves_prompt_unchanged():
+    assert worker.glossary_prompt([]) == "" and worker.glossary_prompt(None) == ""

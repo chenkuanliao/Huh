@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AudioLines, Ellipsis, FileAudio, ListTodo, Mic, Palette, Plus, Search, Sparkles } from 'lucide-react';
+import { AudioLines, BookA, Ellipsis, FileAudio, ListTodo, Mic, Palette, Plus, Search, Sparkles } from 'lucide-react';
 import { Folder, Meeting } from './api';
 import { collectTodos, duration, MeetingDnd, MeetingRow, relativeDay, TodoPanel, useDashData } from './Dashboard';
 import { FolderTile, folderVars } from './folders';
@@ -16,6 +16,8 @@ export default function FolderPage({
   onNew,
   onImport,
   onCustomize,
+  glossaryCount = 0,
+  onGlossary,
   actions,
   reloadMeetings,
   creating,
@@ -30,6 +32,9 @@ export default function FolderPage({
   onNew: () => void;
   onImport: () => void;
   onCustomize: () => void;
+  /** Glossary terms the AI knows here (all notes + this folder). */
+  glossaryCount?: number;
+  onGlossary?: () => void;
   actions: MenuItem[];
   reloadMeetings: () => Promise<void>;
   creating: boolean;
@@ -90,6 +95,11 @@ export default function FolderPage({
           <button type="button" className="ghost-bordered" onClick={onCustomize}>
             <Palette size={16} /> Customize
           </button>
+          {onGlossary && (
+            <button type="button" className="ghost-bordered" onClick={onGlossary} title="Names, terms and acronyms the AI should know in this folder’s meetings">
+              <BookA size={16} /> Glossary{glossaryCount > 0 && <span className="glossary-count">{glossaryCount}</span>}
+            </button>
+          )}
           <button type="button" className="ghost-bordered" onClick={onImport} disabled={creating}>
             <FileAudio size={16} /> Import
           </button>

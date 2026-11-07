@@ -66,6 +66,8 @@ class Meeting(Base):
     folder_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     # Archived meetings are kept, but hidden from the main list and ranked last in search.
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    # Glossary entries [{term, meaning}] given to the AI for this meeting only.
+    glossary: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[float] = mapped_column(Float, default=now)
     updated_at: Mapped[float] = mapped_column(Float, default=now)
     status: Mapped[str] = mapped_column(String, default="idle")
@@ -89,6 +91,8 @@ class Folder(Base):
     # Appearance only: a palette key and an icon key the client knows how to draw.
     color: Mapped[str | None] = mapped_column(String, nullable=True)
     icon: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Glossary entries [{term, meaning}] given to the AI for every meeting in the folder.
+    glossary: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[float] = mapped_column(Float, default=now)
 
 
@@ -213,6 +217,10 @@ def init():
         for col in ("color", "icon"):
             if col not in folder_columns:
                 c.execute(text(f"ALTER TABLE folders ADD COLUMN {col} VARCHAR"))
+        # Additive migration for installations created before glossaries existed.
+        for table, cols in (("meetings", columns), ("folders", folder_columns)):
+            if "glossary" not in cols:
+                c.execute(text(f"ALTER TABLE {table} ADD COLUMN glossary JSON NOT NULL DEFAULT '[]'"))
         if engine.dialect.name == "postgresql":
             c.execute(
                 text(

@@ -515,8 +515,10 @@ def edit_meeting(mid: str, body: dict):
             m.folder_id = require(s, Folder, valid_id(body["folder_id"])).id if body["folder_id"] else None
         if "archived" in body:
             m.archived = boolean(body["archived"], "archived")
-        # Filing and archiving are organisation, not edits; keep the meeting's place in "recent".
-        if set(body) - {"folder_id", "archived"}:
+        if "glossary" in body:
+            m.glossary = glossary_entries(body["glossary"])
+        # Filing, archiving and AI context are organisation, not edits; keep the meeting's place in "recent".
+        if set(body) - {"folder_id", "archived", "glossary"}:
             m.updated_at = now()
         s.flush()
         return public(m)
@@ -554,7 +556,9 @@ FOLDER_ICON = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 
 
 def folder_look(f, body):
-    """Applies optional color/icon from the body; null resets to the default look."""
+    """Applies optional color/icon/glossary from the body; null resets to the default look."""
+    if "glossary" in body:
+        f.glossary = glossary_entries(body["glossary"])
     if "color" in body:
         c = body["color"]
         if c is not None and c not in FOLDER_COLORS:
@@ -1044,7 +1048,7 @@ def write_settings(body: dict):
     with tx() as s:
         v = settings(s)
         for k in DEFAULTS:
-            if k == "provider_models":
+            if k in ("provider_models", "glossary"):
                 continue
             if k in body:
                 v[k] = (
@@ -1066,6 +1070,8 @@ def write_settings(body: dict):
         if v["model"]:
             remembered[v["provider"]] = v["model"]
         v["provider_models"] = remembered
+        if "glossary" in body:
+            v["glossary"] = glossary_entries(body["glossary"])
         if (
             v["stt_model"] not in STT_MODELS
             or v["stt_language"] not in ["auto", "en", "zh", "mixed"]

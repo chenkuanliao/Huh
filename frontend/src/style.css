@@ -5658,3 +5658,132 @@ button.rail-fact:hover {
 .mrow[draggable='true'] {
   -webkit-user-drag: element;
 }
+
+/* Glossary: terms the AI should know (all notes, folder, meeting) */
+.glossary-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.glossary-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 2fr) 5fr 32px;
+  gap: 6px;
+  align-items: center;
+}
+.glossary-row input {
+  min-width: 0;
+}
+.glossary-labels {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 0 2px;
+}
+.glossary-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 2px;
+}
+.glossary-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.glossary-title svg {
+  color: var(--accent);
+  flex: none;
+}
+.glossary-inherited {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.glossary-inherited h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  margin: 0;
+}
+.glossary-layer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.glossary-layer-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+.glossary-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.glossary-chips li {
+  font-size: 12.5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--ink-2);
+  cursor: default;
+}
+.glossary-chips li.replaced {
+  text-decoration: line-through;
+  color: var(--faint);
+}
+button.glossary-chip {
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  font-size: 12.5px;
+  font-weight: 550;
+  gap: 5px;
+}
+button.glossary-chip:hover,
+button.glossary-chip.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.glossary-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+}
+@media (max-width: 560px) {
+  .glossary-row {
+    grid-template-columns: 1fr 32px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+  }
+  .glossary-row input:nth-child(2) {
+    grid-column: 1;
+  }
+  .glossary-row button {
+    grid-row: 1;
+    grid-column: 2;
+  }
+  .glossary-labels {
+    display: none;
+  }
+}
