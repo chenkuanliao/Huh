@@ -30,6 +30,15 @@ import { searchSettings, SECTION_LABELS, SettingEntry, SettingMatch, SettingsSec
 
 export type { SettingsSection };
 
+/** The nearest ancestor that scrolls vertically (the page), for scrolling while dragging. */
+function scrollParent(el: HTMLElement | null): HTMLElement | null {
+  for (let n = el?.parentElement; n; n = n.parentElement) {
+    const oy = getComputedStyle(n).overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight) return n;
+  }
+  return null;
+}
+
 export default function Settings({
   templates,
   reloadTemplates,
@@ -1308,19 +1317,49 @@ function AIOrderPanel({
     const minDy = rects[0].top - rects[from].top;
     const maxDy = rects[rects.length - 1].bottom - rects[from].bottom;
     const startY = e.clientY;
+    // The page scrolls under the card when it's held near the top or bottom edge, so a long list can be
+    // reordered past the edge of the screen. Positions are tracked in page (scrolled) coordinates.
+    const scroller = scrollParent(e.currentTarget as HTMLElement);
+    const scroll0 = scroller?.scrollTop ?? 0;
+    let lastY = e.clientY;
     let to = from;
+    let raf = 0;
     setDrag({ from, to, dy: 0, step });
-    const move = (ev: PointerEvent) => {
-      const dy = Math.max(minDy - 12, Math.min(maxDy + 12, ev.clientY - startY));
+    const update = () => {
+      const scrolled = (scroller?.scrollTop ?? 0) - scroll0;
+      const dy = Math.max(minDy - 12, Math.min(maxDy + 12, lastY - startY + scrolled));
       // The slot whose middle the dragged card's middle has passed.
       const mid = rects[from].top + rects[from].height / 2 + dy;
       to = rects.filter((r, i) => i !== from && r.top + r.height / 2 < mid).length;
       setDrag({ from, to, dy, step });
     };
+    const edgeScroll = () => {
+      raf = requestAnimationFrame(edgeScroll);
+      if (!scroller) return;
+      const box = scroller.getBoundingClientRect();
+      const zone = 64;
+      const speed = lastY < box.top + zone ? -(box.top + zone - lastY) : lastY > box.bottom - zone ? lastY - (box.bottom - zone) : 0;
+      if (!speed) return;
+      // Stop once the card has reached the end of the list in that direction.
+      const dy = lastY - startY + scroller.scrollTop - scroll0;
+      if ((speed > 0 && dy >= maxDy) || (speed < 0 && dy <= minDy)) return;
+      const before = scroller.scrollTop;
+      scroller.scrollTop += Math.max(-16, Math.min(16, speed / 4));
+      if (scroller.scrollTop !== before) update();
+    };
+    raf = requestAnimationFrame(edgeScroll);
+    const move = (ev: PointerEvent) => {
+      lastY = ev.clientY;
+      update();
+    };
+    // Touch: the drag owns the finger, so the page must not also scroll.
+    const noPan = (ev: TouchEvent) => ev.preventDefault();
     const end = () => {
+      cancelAnimationFrame(raf);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
+      document.removeEventListener('touchmove', noPan);
       // Glide from where the card was dropped (and where the others had slid) into the final order.
       remember();
       setDrag(null);
@@ -1329,6 +1368,7 @@ function AIOrderPanel({
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', end);
     window.addEventListener('pointercancel', end);
+    document.addEventListener('touchmove', noPan, { passive: false });
   }
 
   /** Inline transform for a row while a card is being dragged. */

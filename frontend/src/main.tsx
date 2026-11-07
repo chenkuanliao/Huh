@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Archive, ArchiveRestore, ArrowLeft, AudioLines, BookA, BookOpen, Check, ChevronRight, Download, FileAudio, FileText, FolderOpen, History, LayoutDashboard, LayoutTemplate, Ellipsis, ExternalLink, FolderInput, FolderPlus, Lock, Maximize2, Mic, NotebookPen, PanelLeftClose, PanelLeftOpen, Palette, Pencil, Plus, Search, Settings as SettingsIcon, Sparkles, TextSearch, Trash2, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowLeft, AudioLines, BookA, BookOpen, Check, ChevronRight, Download, FileAudio, FileText, FolderOpen, History, LayoutDashboard, LayoutTemplate, Ellipsis, ExternalLink, FolderInput, FolderPlus, Lock, Maximize2, Mic, NotebookPen, PanelLeftClose, PanelLeftOpen, Palette, Pencil, Plus, Search, Settings as SettingsIcon, Smartphone, Sparkles, TextSearch, Trash2, X } from 'lucide-react';
 import { api, errorText, Folder, GlossaryEntry, Meeting, send, Settings as SettingsT, Template } from './api';
 import { GlossaryDialog, GlossaryLayer, mergeGlossaries } from './Glossary';
 import Recorder from './Recorder';
@@ -10,6 +10,7 @@ import MeetingView, { MeetingRequest as Req, runMeetingCommand } from './Meeting
 import CommandPalette, { Command, CommandSection } from './CommandPalette';
 import { defaultTitle } from './format';
 import { forgetMeeting } from './queue';
+import { NewSheet, PhoneAction, PhoneFolder, PhoneHome, PhoneSearch, PhoneSettingsFooter, PhoneTab, PhoneTabBar, PhoneTodos, PhoneTopBar, usePhoneLayout, usePhoneScrolled, usePhoneTyping, useSaveState } from './Mobile';
 
 type MeetingRequest = Req & { meetingId: string };
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -22,7 +23,7 @@ import './style.css';
 type Auth = { authenticated: boolean; setup_required: boolean };
 
 /** Where the user is. Each change is a browser-history entry, so Back (in-app, browser, mouse, Alt+←) retraces it. */
-type View = { page: 'home' } | { page: 'folder'; id: string } | { page: 'meeting'; id: string } | { page: 'settings'; section: SettingsSection };
+type View = { page: 'home' } | { page: 'folder'; id: string } | { page: 'meeting'; id: string } | { page: 'settings'; section: SettingsSection } | { page: 'todos' } | { page: 'search' };
 /** The page above v: a meeting's folder (if it's filed and not archived), otherwise Home. */
 function parentIn(v: View, meetings: Meeting[], folders: Folder[]): View {
   if (v.page === 'meeting') {
@@ -156,7 +157,7 @@ function App() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [page, setPage] = useState<'home' | 'folder' | 'meeting' | 'settings'>('home');
+  const [page, setPage] = useState<View['page']>('home');
   const [folderPage, setFolderPage] = useState<string | null>(null);
   const [section, setSection] = useState<SettingsSection>('ai');
   const query = '';
@@ -167,6 +168,14 @@ function App() {
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
   const [resizing, setResizing] = useState(false);
   const narrow = useNarrow();
+  const layout = usePhoneLayout();
+  const phone = layout.phone;
+  usePhoneTyping(phone);
+  const saveState = useSaveState(phone && page === 'meeting' ? selected : null);
+  usePhoneScrolled(phone, `${page}:${selected}:${folderPage}`);
+  /** The phone's “New meeting” sheet (record / write / import). */
+  const [newSheet, setNewSheet] = useState(false);
+  const [phoneMenu, setPhoneMenu] = useState<{ x: number; y: number } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [creating, setCreating] = useState(false);
   const [noteLanguage, setNoteLanguage] = useState('auto');
@@ -401,6 +410,8 @@ function App() {
   function viewLabel(v: View): string {
     if (v.page === 'home') return 'Home';
     if (v.page === 'settings') return 'Settings';
+    if (v.page === 'todos') return 'To-dos';
+    if (v.page === 'search') return 'Search';
     if (v.page === 'folder') return folders.find(f => f.id === v.id)?.name || 'Folder';
     return meetings.find(m => m.id === v.id)?.title || 'Untitled meeting';
   }
@@ -431,7 +442,7 @@ function App() {
     go({ page: 'meeting', id });
   }
 
-  async function newMeeting(title?: string, importAfter = false, folderId?: string) {
+  async function newMeeting(title?: string, importAfter = false, folderId?: string, record = false) {
     setCreating(true);
     try {
       const m = await send<Meeting>('/meetings', { title: title ?? defaultTitle(new Date()), ...(folderId ? { folder_id: folderId } : {}) });
@@ -439,6 +450,8 @@ function App() {
       open(m.id);
       // The recorder owns the import dialog; open it once it follows the new meeting.
       if (importAfter) setTimeout(() => window.dispatchEvent(new Event('huh:import-audio')), 60);
+      // Likewise the recorder starts recording once it follows the new meeting.
+      if (record) setTimeout(() => window.dispatchEvent(new CustomEvent('huh:start-recording', { detail: m.id })), 60);
     } catch (e) {
       toast(errorText(e), 'error');
     } finally {
@@ -821,6 +834,7 @@ function App() {
       ...(canGoBack && backLabel !== 'Home' ? [{ id: 'back', kind: 'action' as const, title: `Go back to ${backLabel}`, keywords: ['previous', 'return'], icon: <ArrowLeft size={16} />, shortcut: keys.back, run: back }] : []),
       { id: 'settings', kind: 'action', title: 'Open settings', keywords: ['preferences', 'options', 'configure'], icon: <SettingsIcon size={16} />, run: () => openSettings() },
       { id: 'sidebar', kind: 'action', title: sidebarShown ? 'Hide sidebar' : 'Show sidebar', keywords: ['toggle', 'panel', 'collapse', 'expand', 'menu'], icon: sidebarShown ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />, shortcut: keys.sidebar, run: toggleSidebar },
+      ...(layout.pref === 'desktop' ? [{ id: 'phone-layout', kind: 'action' as const, title: 'Use the phone layout', subtitle: 'Bigger buttons, one thing at a time', keywords: ['mobile', 'iphone', 'layout', 'touch'], icon: <LayoutDashboard size={16} />, run: () => layout.setPref('auto') }] : []),
       { id: 'lock', kind: 'action', title: 'Lock notebook', subtitle: 'Sign out on this device', keywords: ['log out', 'logout', 'sign out'], icon: <Lock size={16} />, run: () => void lock() },
     ];
 
@@ -868,6 +882,252 @@ function App() {
       ].filter((s): s is CommandSection => !!s),
     };
   })();
+
+  const overlays = (
+    <>
+        <ContextMenu
+          at={menu && { x: menu.x, y: menu.y }}
+          onClose={() => setMenu(null)}
+          label="Meeting actions"
+          header={menu && <div className="menu-header truncate">{menu.meeting.title || 'Untitled meeting'}</div>}
+          items={menu ? meetingActions(menu.meeting, menu.page) : []}
+        />
+        <ContextMenu
+          at={folderMenu && { x: folderMenu.x, y: folderMenu.y }}
+          onClose={() => setFolderMenu(null)}
+          label="Folder actions"
+          header={folderMenu && <div className="menu-header truncate">{folderMenu.folder.name}</div>}
+          items={folderMenu ? folderActions(folderMenu.folder, { open: true, rename: true }) : []}
+        />
+        <FolderDialog
+          open={!!folderDialog}
+          folder={folderDialog?.folder}
+          suggestedColor={nextFolderColor(folders)}
+          onClose={() => setFolderDialog(null)}
+          onSave={saveFolder}
+        />
+        {glossaryDialog()}
+        <ConfirmDialog
+          open={!!deletingFolder}
+          onClose={() => setDeletingFolder(null)}
+          icon={<Trash2 size={20} />}
+          title={<>Delete the folder “{deletingFolder?.name}”?</>}
+          description="Only the folder is removed. The meetings inside it move back to the main list, with nothing deleted."
+          confirmLabel="Delete folder"
+          onConfirm={() => void confirmDeleteFolder()}
+        />
+        <Modal
+          open={!!moving}
+          onClose={() => setMoving(null)}
+          title={<>Move {moving && name(moving)}</>}
+          description={moving?.archived ? 'Moving it also restores it from the archive.' : undefined}
+        >
+          {moving && (
+            <div className="move-list">
+              {[{ id: null as string | null, name: 'No folder' }, ...folders].map(f => {
+                const here = !moving.archived && (moving.folder_id || null) === f.id;
+                return (
+                  <button
+                    key={f.id ?? UNFILED}
+                    type="button"
+                    className={cx('move-option', here && 'current')}
+                    disabled={here}
+                    onClick={() => {
+                      setMoving(null);
+                      void moveTo(moving, f.id);
+                    }}
+                  >
+                    {f.id ? <FolderGlyph folder={f as Folder} /> : <LayoutDashboard size={15} />}
+                    <span className="truncate">{f.name}</span>
+                    {here && <Check size={15} className="move-check" />}
+                  </button>
+                );
+              })}
+              <form
+                className="move-new"
+                onSubmit={async e => {
+                  e.preventDefault();
+                  const m = moving;
+                  const f = await createFolder(movingNew);
+                  if (!f) return;
+                  setMoving(null);
+                  void organize(m, { folder_id: f.id, ...(m.archived ? { archived: false } : {}) }, `Moved ${name(m)} to ${f.name}.`);
+                }}
+              >
+                <input aria-label="New folder name" placeholder="New folder…" maxLength={200} value={movingNew} onChange={e => setMovingNew(e.target.value)} />
+                <button type="submit" className="primary" disabled={!movingNew.trim()}>
+                  <FolderPlus size={15} /> Create &amp; move
+                </button>
+              </form>
+            </div>
+          )}
+        </Modal>
+        <Modal open={!!renameDialog} onClose={() => setRenameDialog(null)} title="Rename meeting">
+          {renameDialog && (
+            <form
+              className="rename-form"
+              onSubmit={e => {
+                e.preventDefault();
+                const r = renameDialog;
+                setRenameDialog(null);
+                void rename(r.id, r.title);
+              }}
+            >
+              <input
+                autoFocus
+                aria-label="Meeting name"
+                maxLength={500}
+                value={renameDialog.title}
+                onFocus={e => e.target.select()}
+                onChange={e => setRenameDialog({ ...renameDialog, title: e.target.value })}
+              />
+              <div className="row rename-actions">
+                <button type="button" className="ghost" onClick={() => setRenameDialog(null)}>
+                  Cancel
+                </button>
+                <button type="submit" className="primary">
+                  Rename
+                </button>
+              </div>
+            </form>
+          )}
+        </Modal>
+        <ConfirmDialog
+          open={!!deleting}
+          onClose={() => setDeleting(null)}
+          icon={<Trash2 size={20} />}
+          title={<>Delete “{deleting?.title || 'Untitled meeting'}”?</>}
+          description="Its notes, AI notes and their history, transcript and audio recordings will be permanently removed from the server and this device. This can’t be undone."
+          confirmLabel="Delete meeting"
+          busy={deleteBusy}
+          onConfirm={() => void confirmDelete()}
+        />
+        <AINotices />
+    </>
+  );
+
+  const recorder = <Recorder meeting={selected} meetings={meetings} hideWhenIdle={page !== 'meeting'} onOpenMeeting={open} onChange={() => setRefreshKey(k => k + 1)} />;
+  const reveal = (id: string, field: 'notes' | 'enhanced_notes', line: number, lineText: string) => {
+    open(id);
+    setRequest({ meetingId: id, tab: field === 'notes' ? 'notes' : 'enhanced', line, lineText, n: Date.now() });
+  };
+
+  if (phone) {
+    const tab: PhoneTab | null = page === 'home' || page === 'folder' ? 'home' : page === 'todos' || page === 'search' || page === 'settings' ? page : null;
+    const goTab = (t: PhoneTab) => {
+      if (t === 'settings') openSettings();
+      else go({ page: t }, page !== 'meeting' && page !== 'folder' && page !== t);
+      document.querySelector('.page')?.scrollTo({ top: 0 });
+    };
+    const rowMenu = (m: Meeting, x: number, y: number) => setMenu({ meeting: m, x, y, page: true });
+    const phoneBack = backLabel === 'Home' ? 'Meetings' : backLabel;
+    const newFolderId = page === 'folder' ? openFolderObj?.id : current && page === 'meeting' && !current.archived ? current.folder_id || undefined : undefined;
+    const meetingMenu: MenuItem[] = current
+      ? [
+          { label: 'Find in this meeting', icon: <TextSearch size={17} />, onSelect: () => runMeetingCommand('find') },
+          { label: current.enhanced_notes?.trim() ? 'Regenerate AI notes' : 'Generate AI notes', icon: <Sparkles size={17} />, onSelect: () => runMeetingCommand('generate') },
+          { label: 'AI format & language…', icon: <LayoutTemplate size={17} />, onSelect: () => runMeetingCommand('ai-options') },
+          { label: 'AI versions', icon: <History size={17} />, onSelect: () => setRequest({ meetingId: current.id, tab: 'history', n: Date.now() }) },
+          { label: 'Glossary…', icon: <BookA size={17} />, onSelect: () => setGlossaryFor({ kind: 'meeting', id: current.id }) },
+          'divider',
+          { label: 'Rename', icon: <Pencil size={17} />, onSelect: () => setRenameDialog({ id: current.id, title: current.title }) },
+          { label: 'Import audio file…', icon: <FileAudio size={17} />, onSelect: () => window.dispatchEvent(new Event('huh:import-audio')) },
+          { label: 'Recording setup…', icon: <Mic size={17} />, onSelect: () => window.dispatchEvent(new Event('huh:recording-setup')) },
+          'divider',
+          ...organizeActions(current),
+          { label: 'Export as Markdown', icon: <Download size={17} />, onSelect: () => window.open(`/api/meetings/${current.id}/export?format=md`, '_blank') },
+          'divider',
+          { label: 'Delete meeting…', icon: <Trash2 size={17} />, danger: true, onSelect: () => setDeleting(current) },
+        ]
+      : [];
+    const phoneActions: PhoneAction[] = [
+      { id: 'record', title: 'Record a new meeting', icon: <Mic size={19} />, keywords: 'new start create audio', run: () => void newMeeting(undefined, false, undefined, true) },
+      { id: 'write', title: 'Write a new note', icon: <NotebookPen size={19} />, keywords: 'new create meeting blank', run: () => void newMeeting() },
+      { id: 'import', title: 'Import a recording', icon: <FileAudio size={19} />, keywords: 'upload voice memo m4a audio file', run: () => void newMeeting(undefined, true) },
+      { id: 'folder', title: 'New folder', icon: <FolderPlus size={19} />, keywords: 'create organize', run: () => setFolderDialog({ folder: null }) },
+      { id: 'todos', title: 'Open to-dos', icon: <Check size={19} />, keywords: 'tasks checkboxes', run: () => go({ page: 'todos' }) },
+      { id: 'settings', title: 'Settings', icon: <SettingsIcon size={19} />, keywords: 'preferences ai transcription templates', run: () => openSettings() },
+      { id: 'lock', title: 'Lock notebook', icon: <Lock size={19} />, keywords: 'log out sign out', run: () => void lock() },
+    ];
+    return (
+      <div className="app phone-app">
+        <main className="workspace">
+          {(page === 'meeting' || page === 'folder') && (
+            <PhoneTopBar
+              backLabel={phoneBack}
+              onBack={back}
+              onRecord={page === 'meeting' && selected ? () => window.dispatchEvent(new CustomEvent('huh:start-recording', { detail: selected })) : undefined}
+              title={page === 'meeting' ? current?.title ?? '' : openFolderObj?.name}
+              save={page === 'meeting' ? saveState : null}
+              onMenu={e => {
+                const r = e.currentTarget.getBoundingClientRect();
+                if (page === 'meeting' && current) setPhoneMenu({ x: r.left, y: r.bottom });
+                else if (openFolderObj) setFolderMenu({ folder: openFolderObj, x: r.left, y: r.bottom });
+              }}
+            />
+          )}
+          <div className="page" key={page === 'folder' ? `folder-${folderPage}` : page === 'meeting' ? `meeting-${selected}` : page}>
+            {page === 'settings' ? (
+              <>
+                <Settings templates={templates} reloadTemplates={reloadTemplates} section={section} onSection={switchSection} onSettingsChange={applySettings} />
+                <PhoneSettingsFooter onDesktop={() => layout.setPref('desktop')} onLock={() => void lock()} />
+              </>
+            ) : page === 'meeting' && selected ? (
+              <MeetingView
+                key={selected}
+                id={selected}
+                phone
+                templates={templates}
+                refreshKey={refreshKey}
+                onListChanged={() => void reloadMeetings().catch(() => {})}
+                onRequestDelete={() => current && setDeleting(current)}
+                folder={current ? folders.find(f => f.id === current.folder_id) : undefined}
+                glossaryCount={current ? mergeGlossaries(globalGlossary, folders.find(f => f.id === current.folder_id)?.glossary, current.glossary).length : 0}
+                onGlossary={() => setGlossaryFor({ kind: 'meeting', id: selected })}
+                onOpenFolder={openFolder}
+                onUnarchive={() => current && void unarchive(current)}
+                onManageTemplates={() => openSettings('templates')}
+                views={views}
+                defaultNoteLanguage={noteLanguage}
+                request={request?.meetingId === selected ? request : null}
+              />
+            ) : page === 'folder' && openFolderObj ? (
+              <PhoneFolder folder={openFolderObj} meetings={byFolder.get(openFolderObj.id) || []} folders={folders} onOpen={open} onMenu={rowMenu} onNew={() => setNewSheet(true)} />
+            ) : page === 'todos' ? (
+              <PhoneTodos meetings={active} folders={folders} onReveal={reveal} reloadMeetings={reloadMeetings} />
+            ) : page === 'search' ? (
+              <PhoneSearch
+                meetings={meetings}
+                folders={folders}
+                actions={phoneActions}
+                onOpenFolder={openFolder}
+                onOpen={(id, q) => {
+                  open(id);
+                  if (!q) return;
+                  const m = meetings.find(x => x.id === id);
+                  const inAi = (m?.enhanced_notes || '').toLowerCase().includes(q.toLowerCase());
+                  const inNotes = (m?.notes || '').toLowerCase().includes(q.toLowerCase());
+                  if (inAi || inNotes) setRequest({ meetingId: id, tab: inAi ? 'enhanced' : 'notes', query: q, n: Date.now() });
+                }}
+              />
+            ) : (
+              <PhoneHome meetings={meetings} folders={folders} onOpen={open} onMenu={rowMenu} onOpenFolder={openFolder} onNewFolder={() => setFolderDialog({ folder: null })} onSearch={() => go({ page: 'search' })} onNew={() => setNewSheet(true)} />
+            )}
+          </div>
+          {overlays}
+          <ContextMenu at={phoneMenu} onClose={() => setPhoneMenu(null)} label="Meeting actions" header={current && <div className="menu-header truncate">{current.title || 'Untitled meeting'}</div>} items={meetingMenu} />
+          <NewSheet
+            open={newSheet}
+            onClose={() => setNewSheet(false)}
+            folder={folders.find(f => f.id === newFolderId)}
+            onPick={k => void newMeeting(undefined, k === 'import', newFolderId, k === 'record')}
+          />
+          {recorder}
+          {page !== 'meeting' && <PhoneTabBar tab={tab} onTab={goTab} onNew={() => setNewSheet(true)} creating={creating} />}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -1006,6 +1266,11 @@ function App() {
           )}
         </nav>
         <div className="sidebar-bottom">
+          {layout.pref === 'desktop' && (
+            <button type="button" className="nav-button phone-return" onClick={() => layout.setPref('auto')}>
+              <Smartphone size={17} /> Use the phone layout
+            </button>
+          )}
           <button type="button" className={cx('nav-button', page === 'settings' && 'on')} onClick={() => openSettings()}>
             <SettingsIcon size={17} /> Settings
           </button>
@@ -1085,7 +1350,18 @@ function App() {
         </header>
         <div className="page" key={page === 'folder' ? `folder-${folderPage}` : page === 'meeting' ? `meeting-${selected}` : page}>
           {page === 'settings' ? (
+            <>
+            {layout.pref === 'desktop' && (
+              <div className="phone-return-banner">
+                <Smartphone size={18} />
+                <span>You chose the desktop layout on this device.</span>
+                <button type="button" className="primary sm" onClick={() => layout.setPref('auto')}>
+                  Use the phone layout
+                </button>
+              </div>
+            )}
             <Settings templates={templates} reloadTemplates={reloadTemplates} section={section} onSection={switchSection} onSettingsChange={applySettings} />
+            </>
           ) : page === 'meeting' && selected ? (
             <MeetingView
               key={selected}
@@ -1149,125 +1425,8 @@ function App() {
           )}
         </div>
         <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={palette.commands} suggestions={palette.suggestions} />
-        <ContextMenu
-          at={menu && { x: menu.x, y: menu.y }}
-          onClose={() => setMenu(null)}
-          label="Meeting actions"
-          header={menu && <div className="menu-header truncate">{menu.meeting.title || 'Untitled meeting'}</div>}
-          items={menu ? meetingActions(menu.meeting, menu.page) : []}
-        />
-        <ContextMenu
-          at={folderMenu && { x: folderMenu.x, y: folderMenu.y }}
-          onClose={() => setFolderMenu(null)}
-          label="Folder actions"
-          header={folderMenu && <div className="menu-header truncate">{folderMenu.folder.name}</div>}
-          items={folderMenu ? folderActions(folderMenu.folder, { open: true, rename: true }) : []}
-        />
-        <FolderDialog
-          open={!!folderDialog}
-          folder={folderDialog?.folder}
-          suggestedColor={nextFolderColor(folders)}
-          onClose={() => setFolderDialog(null)}
-          onSave={saveFolder}
-        />
-        {glossaryDialog()}
-        <ConfirmDialog
-          open={!!deletingFolder}
-          onClose={() => setDeletingFolder(null)}
-          icon={<Trash2 size={20} />}
-          title={<>Delete the folder “{deletingFolder?.name}”?</>}
-          description="Only the folder is removed. The meetings inside it move back to the main list, with nothing deleted."
-          confirmLabel="Delete folder"
-          onConfirm={() => void confirmDeleteFolder()}
-        />
-        <Modal
-          open={!!moving}
-          onClose={() => setMoving(null)}
-          title={<>Move {moving && name(moving)}</>}
-          description={moving?.archived ? 'Moving it also restores it from the archive.' : undefined}
-        >
-          {moving && (
-            <div className="move-list">
-              {[{ id: null as string | null, name: 'No folder' }, ...folders].map(f => {
-                const here = !moving.archived && (moving.folder_id || null) === f.id;
-                return (
-                  <button
-                    key={f.id ?? UNFILED}
-                    type="button"
-                    className={cx('move-option', here && 'current')}
-                    disabled={here}
-                    onClick={() => {
-                      setMoving(null);
-                      void moveTo(moving, f.id);
-                    }}
-                  >
-                    {f.id ? <FolderGlyph folder={f as Folder} /> : <LayoutDashboard size={15} />}
-                    <span className="truncate">{f.name}</span>
-                    {here && <Check size={15} className="move-check" />}
-                  </button>
-                );
-              })}
-              <form
-                className="move-new"
-                onSubmit={async e => {
-                  e.preventDefault();
-                  const m = moving;
-                  const f = await createFolder(movingNew);
-                  if (!f) return;
-                  setMoving(null);
-                  void organize(m, { folder_id: f.id, ...(m.archived ? { archived: false } : {}) }, `Moved ${name(m)} to ${f.name}.`);
-                }}
-              >
-                <input aria-label="New folder name" placeholder="New folder…" maxLength={200} value={movingNew} onChange={e => setMovingNew(e.target.value)} />
-                <button type="submit" className="primary" disabled={!movingNew.trim()}>
-                  <FolderPlus size={15} /> Create &amp; move
-                </button>
-              </form>
-            </div>
-          )}
-        </Modal>
-        <Modal open={!!renameDialog} onClose={() => setRenameDialog(null)} title="Rename meeting">
-          {renameDialog && (
-            <form
-              className="rename-form"
-              onSubmit={e => {
-                e.preventDefault();
-                const r = renameDialog;
-                setRenameDialog(null);
-                void rename(r.id, r.title);
-              }}
-            >
-              <input
-                autoFocus
-                aria-label="Meeting name"
-                maxLength={500}
-                value={renameDialog.title}
-                onFocus={e => e.target.select()}
-                onChange={e => setRenameDialog({ ...renameDialog, title: e.target.value })}
-              />
-              <div className="row rename-actions">
-                <button type="button" className="ghost" onClick={() => setRenameDialog(null)}>
-                  Cancel
-                </button>
-                <button type="submit" className="primary">
-                  Rename
-                </button>
-              </div>
-            </form>
-          )}
-        </Modal>
-        <ConfirmDialog
-          open={!!deleting}
-          onClose={() => setDeleting(null)}
-          icon={<Trash2 size={20} />}
-          title={<>Delete “{deleting?.title || 'Untitled meeting'}”?</>}
-          description="Its notes, AI notes and their history, transcript and audio recordings will be permanently removed from the server and this device. This can’t be undone."
-          confirmLabel="Delete meeting"
-          busy={deleteBusy}
-          onConfirm={() => void confirmDelete()}
-        />
-        <AINotices />
-        <Recorder meeting={selected} meetings={meetings} hideWhenIdle={page !== 'meeting'} onOpenMeeting={open} onChange={() => setRefreshKey(k => k + 1)} />
+        {overlays}
+        {recorder}
       </main>
     </div>
   );

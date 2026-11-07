@@ -1,4 +1,5 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { blankEmptyItems } from './textkeys';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AudioLines, ChevronRight, Copy, NotebookPen, Quote, X } from 'lucide-react';
@@ -227,7 +228,7 @@ const LiInner = withSources('li');
 export default function Markdown({ text, onToggleTask, className, empty, sources }: { text: string; onToggleTask?: (line: number) => void; className?: string; empty?: string; sources?: SourceInfo }) {
   const interactive = !!onToggleTask;
   // Markers become empty fragment links that the renderer hides and blocks pick up.
-  const prepared = (text || '').replace(SOURCE_MARKER, (_, body: string) => `[​](#src=${encodeURIComponent(body.replace(/\s+/g, ''))})`);
+  const prepared = blankEmptyItems(text || '').replace(SOURCE_MARKER, (_, body: string) => `[​](#src=${encodeURIComponent(body.replace(/\s+/g, ''))})`);
   const [open, setOpen] = useState<string | null>(null);
   // Stable renderers: new component functions on each render would remount every block (and close any open menu).
   const components = useMemo<Components>(

@@ -88,3 +88,49 @@ export function handleEditorKeys(e: React.KeyboardEvent<HTMLTextAreaElement>): b
   }
   return false;
 }
+
+/**
+ * Indent (or outdent) one list line, as Tab / Shift+Tab would; for the phone's swipe on a line.
+ * Returns false when the line isn't a bullet, numbered or checkbox item, or can't move further.
+ */
+export function shiftListLine(el: HTMLTextAreaElement, lineIndex: number, outdent: boolean): boolean {
+  const { value } = el;
+  let from = 0;
+  for (let i = 0; i < lineIndex; i++) {
+    const nl = value.indexOf('\n', from);
+    if (nl === -1) return false;
+    from = nl + 1;
+  }
+  const nl = value.indexOf('\n', from);
+  const to = nl === -1 ? value.length : nl;
+  const line = value.slice(from, to);
+  if (!LIST_LINE.test(line)) return false;
+  if (!outdent) {
+    // Nest only under a list item on the line above (indenting a first item would make it a code block).
+    // The nearest line above that has something on it (blank lines between items don't count).
+    const above = value.slice(0, Math.max(0, from - 1)).split('\n').reverse();
+    const prev = from > 0 ? above.find(l => l.trim()) ?? '' : '';
+    const width = (l: string) => (l.match(/^\s*/)?.[0] ?? '').replace(/\t/g, INDENT).length;
+    if (!LIST_LINE.test(prev) || width(line) > width(prev)) return false;
+  }
+  const next = outdent ? line.replace(/^(\t| {1,4})/, '') : INDENT + line;
+  if (next === line) return false;
+  replace(el, from, to, next);
+  el.setSelectionRange(from + next.length, from + next.length);
+  return true;
+}
+
+/**
+ * List items with nothing written yet (a "- " or "- [ ] " left by Enter) are blanked for reading,
+ * so they don't show as a stray bullet or a literal "[ ]". Line numbers stay the same.
+ */
+export function blankEmptyItems(md: string): string {
+  let fence = false;
+  return md
+    .split('\n')
+    .map(l => {
+      if (/^\s*(```|~~~)/.test(l)) fence = !fence;
+      return !fence && /^\s*(?:[-*+]|\d+[.)])(?:\s+\[[ xX]\])?\s*$/.test(l) ? '' : l;
+    })
+    .join('\n');
+}

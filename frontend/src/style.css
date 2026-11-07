@@ -5921,3 +5921,1349 @@ button.glossary-chip.on {
     display: none;
   }
 }
+
+/* ============================================================ phone layout
+   Used on phones (see Mobile.tsx). Bigger touch targets, one column, a bottom tab bar,
+   and menus/dialogs as bottom sheets. Everything is scoped to body.phone. */
+body.phone {
+  --phone-tabbar-h: 58px;
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-t: env(safe-area-inset-top, 0px);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+/* iOS zooms into any field under 16px; keep every field at 16px. */
+body.phone input,
+body.phone textarea,
+body.phone select,
+body.phone .note-editor {
+  font-size: 16px !important;
+}
+body.phone button {
+  touch-action: manipulation;
+}
+body.phone .phone-app .page {
+  padding-bottom: 24px;
+}
+
+/* ----- tab bar */
+.phone-tabbar {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: center;
+  height: calc(var(--phone-tabbar-h) + var(--safe-b));
+  padding: 0 4px var(--safe-b);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: saturate(1.4) blur(14px);
+  -webkit-backdrop-filter: saturate(1.4) blur(14px);
+  border-top: 1px solid var(--line);
+  z-index: 20;
+}
+.tabbar-item {
+  height: 100%;
+  flex-direction: column;
+  gap: 3px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 6px 0 4px;
+  border-radius: 0;
+}
+.tabbar-item:hover {
+  background: transparent;
+}
+.tabbar-item.on {
+  color: var(--accent);
+}
+.tabbar-new {
+  justify-self: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 4px 14px rgba(47, 106, 79, 0.35);
+  transform: translateY(-6px);
+}
+.tabbar-new:hover {
+  background: var(--accent-hover);
+}
+.tabbar-new:active {
+  transform: translateY(-6px) scale(0.94);
+}
+
+/* ----- top bar for pushed pages */
+.phone-top {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 50px;
+  padding: 0 6px 0 2px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  z-index: 20;
+}
+.phone-back {
+  height: 44px;
+  min-width: 0;
+  max-width: 62%;
+  gap: 0;
+  padding: 0 10px 0 2px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 500;
+}
+.phone-back:hover {
+  background: transparent;
+}
+.phone-top-title {
+  flex: 1;
+  text-align: center;
+  font-weight: 600;
+}
+.phone-top .phone-icon-btn:last-child {
+  margin-left: auto;
+}
+.phone-icon-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-2);
+  border-radius: 50%;
+}
+.phone-icon-btn:active {
+  background: var(--surface-2);
+}
+
+/* ----- pages */
+.phone-page {
+  padding: 14px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.phone-top + .page .phone-page {
+  padding-top: 16px;
+}
+.phone-head h1 {
+  font-size: 32px;
+  line-height: 1.15;
+}
+.phone-date {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.phone-searchbox {
+  justify-content: flex-start;
+  gap: 10px;
+  height: 44px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 0;
+  background: var(--surface-3);
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 400;
+}
+.chip-scroll {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 0 -16px;
+  padding: 2px 16px;
+  scroll-padding: 0 16px;
+}
+.chip-scroll::-webkit-scrollbar {
+  display: none;
+}
+.fchip {
+  flex-shrink: 0;
+  height: 38px;
+  padding: 0 14px;
+  gap: 7px;
+  border-radius: 19px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: none;
+  font-size: 14.5px;
+  font-weight: 550;
+  color: var(--ink);
+}
+.fchip.on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--surface);
+}
+.fchip.add {
+  color: var(--muted);
+  border-style: dashed;
+}
+.fchip-n {
+  font-size: 12px;
+  font-weight: 650;
+  opacity: 0.6;
+}
+.phone-banner {
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: none;
+  font-weight: 450;
+  text-align: left;
+}
+.phone-banner.live {
+  border-color: #f0d4ce;
+  background: var(--rec-soft);
+  color: var(--rec);
+}
+.phone-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.phone-group-label {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  padding: 4px 4px 0;
+  font-family: var(--font);
+}
+.prows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.prow-item {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+.prow-item + .prow-item {
+  border-top: 1px solid var(--line);
+}
+.prow {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  min-height: 64px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 3px;
+  padding: 12px 4px 12px 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  font-weight: 400;
+}
+.prow:active,
+.phone-list-item:active {
+  background: var(--surface-2);
+}
+.prow.compact {
+  min-height: 50px;
+}
+.prow-top {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.prow-top strong {
+  flex: 1;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.prow-when {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.prow-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--rec);
+  font-weight: 600;
+}
+.prow-snippet {
+  white-space: normal;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.prow-snippet.empty {
+  color: var(--faint);
+}
+.prow-snippet mark {
+  background: var(--flash);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+.prow-tags {
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--muted);
+  min-width: 0;
+}
+.prow-folder,
+.prow-ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.prow-folder {
+  color: var(--folder, var(--muted));
+}
+.prow-ai {
+  color: var(--accent);
+}
+.prow-menu {
+  flex-shrink: 0;
+  width: 44px;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--faint);
+}
+.phone-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--muted);
+}
+.phone-empty strong {
+  color: var(--ink);
+  font-size: 17px;
+}
+.phone-empty p {
+  margin: 0;
+}
+.phone-wide {
+  height: 48px;
+  font-size: 16px;
+  border-radius: 12px;
+}
+.phone-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.phone-folder-head h1 {
+  font-size: 28px;
+}
+.phone-folder-head p {
+  margin: 0;
+}
+.phone-list {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.phone-list-item {
+  justify-content: flex-start;
+  gap: 14px;
+  min-height: 52px;
+  height: auto;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 16px;
+  font-weight: 450;
+  text-align: left;
+}
+.phone-list-item + .phone-list-item {
+  border-top: 1px solid var(--line);
+}
+.phone-list-item svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.phone-list-item > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.phone-list-item small {
+  color: var(--muted);
+  font-size: 13px;
+}
+.phone-settings-footer {
+  padding: 0 16px 24px;
+}
+.phone-search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 6px 0 14px;
+  border-radius: 12px;
+  background: var(--surface-3);
+  color: var(--muted);
+}
+.phone-search-field input {
+  flex: 1;
+  min-width: 0;
+  height: 100% !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.phone-search-field input::-webkit-search-cancel-button {
+  display: none;
+}
+.phone-clear {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: 0;
+  box-shadow: none;
+  background: var(--line-strong);
+  color: var(--surface);
+}
+
+/* ----- new meeting sheet */
+.new-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 8px;
+}
+.new-option {
+  justify-content: flex-start;
+  gap: 14px;
+  height: auto;
+  min-height: 68px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  text-align: left;
+  font-weight: 400;
+}
+.new-option > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.new-option strong {
+  font-size: 16.5px;
+}
+.new-option small {
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.35;
+}
+.new-option-icon {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.new-option.record .new-option-icon {
+  background: var(--rec-soft);
+  color: var(--rec);
+}
+
+/* ----- bottom sheets: every menu, dropdown and dialog rises from the bottom edge */
+body.phone .popover {
+  position: fixed !important;
+  left: 0 !important;
+  right: 0 !important;
+  top: auto !important;
+  bottom: 0 !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  max-height: 78dvh !important;
+  border-radius: 18px 18px 0 0;
+  border: 0;
+  padding: 0 8px calc(10px + var(--safe-b));
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.12);
+  overscroll-behavior: contain;
+  overflow-y: auto;
+  animation: sheet-up 0.22s var(--ease-out);
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(40px);
+    opacity: 0;
+  }
+}
+body.phone .menu-item,
+body.phone .select-option {
+  min-height: 50px;
+  font-size: 16px;
+  padding: 10px 14px;
+  border-radius: 10px;
+}
+body.phone .menu-header {
+  padding: 4px 14px 8px;
+}
+body.phone .modal-backdrop {
+  place-items: end stretch;
+  padding: 0;
+}
+body.phone .modal {
+  max-width: none !important;
+  max-height: 92dvh;
+  border-radius: 18px 18px 0 0;
+  padding-bottom: var(--safe-b);
+  animation: sheet-up 0.24s var(--ease-out);
+}
+body.phone .modal-footer button,
+body.phone .modal-body .primary,
+body.phone .modal-body .ghost {
+  min-height: 44px;
+}
+body.phone .toasts {
+  left: 12px;
+  right: 12px;
+  width: auto;
+  bottom: calc(var(--phone-tabbar-h) + var(--safe-b) + 12px);
+}
+body.phone:has(.recorder) .toasts {
+  bottom: calc(var(--phone-tabbar-h) + var(--safe-b) + 84px);
+}
+body.phone .undo-bar {
+  bottom: calc(var(--phone-tabbar-h) + var(--safe-b) + 12px);
+}
+
+/* ----- meeting */
+body.phone .meeting {
+  padding: 12px 16px 24px;
+}
+body.phone .meeting-meta {
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 13px;
+  min-height: 0;
+}
+body.phone .meeting-meta .spacer {
+  display: none;
+}
+body.phone .title-input {
+  font-size: 26px !important;
+  line-height: 1.2;
+}
+body.phone .meeting .tabbar {
+  margin-top: 12px;
+  border-bottom: 0;
+}
+body.phone .meeting .tabs {
+  width: 100%;
+  margin: 0;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 11px;
+  background: var(--surface-3);
+}
+body.phone .meeting .tab {
+  flex: 1;
+  height: 36px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+body.phone .meeting .tab.on {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+body.phone .meeting .tab-count {
+  display: none;
+}
+body.phone .tab-panels {
+  padding-top: 12px;
+}
+.phone-ai {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.phone-ai > :last-child {
+  grid-column: 1 / -1;
+  height: 46px;
+  font-size: 16px;
+  border-radius: 12px;
+}
+body.phone .phone-ai .select-trigger {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+}
+.phone-ai .gen-suffix {
+  display: inline !important;
+}
+body.phone .editor-toolbar button[aria-label='Focus mode'] {
+  display: none;
+}
+body.phone .editor-toolbar .segmented {
+  height: auto;
+  align-items: center;
+  overflow: visible;
+  border-radius: 10px;
+}
+body.phone .editor-toolbar .segmented button {
+  height: 34px;
+  min-height: 0;
+  padding: 0 14px;
+  font-size: 14px;
+  border-radius: 8px;
+}
+body.phone .editor-toolbar .ghost.sm {
+  height: 34px;
+}
+body.phone .version-row > :first-child,
+body.phone .version-row .select-trigger {
+  width: 100%;
+  max-width: none;
+  height: 40px;
+}
+body.phone .note-editor,
+body.phone .note-preview {
+  min-height: 52dvh;
+  padding: 14px 14px !important;
+  border-radius: 12px !important;
+}
+body.phone .note-preview {
+  font-size: 16px;
+}
+body.phone .version-row {
+  flex-wrap: wrap;
+}
+body.phone .transcript .section-bar {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+body.phone .transcript .section-bar h2 {
+  width: 100%;
+}
+body.phone .segment .timestamp {
+  min-height: 32px;
+}
+body.phone .history {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ----- recorder: one row when idle, big Pause / Finish while recording */
+body.phone .recorder {
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px calc(10px + var(--safe-b));
+  min-height: 0;
+}
+body.phone .phone-tabbar ~ .recorder,
+body.phone .recorder:has(~ .phone-tabbar) {
+  padding-bottom: 10px;
+}
+body.phone .recorder-status {
+  min-width: 0;
+}
+body.phone .recorder-text small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body.phone .recorder .source-chip {
+  display: none;
+}
+body.phone .recorder.live .recorder-actions,
+body.phone .recorder.paused .recorder-actions {
+  width: 100%;
+}
+body.phone .recorder.live .recorder-actions > button:not(.icon-button),
+body.phone .recorder.paused .recorder-actions > button:not(.icon-button) {
+  flex: 1;
+}
+body.phone .recorder .record-button,
+body.phone .recorder .stop-button,
+body.phone .recorder .recorder-actions > .ghost {
+  height: 46px;
+  border-radius: 23px;
+  font-size: 16px;
+  padding: 0 18px;
+}
+body.phone .recorder .recorder-actions .icon-button {
+  width: 44px;
+  height: 44px;
+}
+body.phone .recorder .elapsed {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----- other pages */
+body.phone .phone-page .panel {
+  padding: 14px;
+  border-radius: 14px;
+}
+body.phone .todo-text {
+  min-height: 40px;
+}
+body.phone .settings-page {
+  padding-top: 12px;
+}
+
+/* Once AI notes exist, Regenerate shrinks to an icon beside Format and Language. */
+.phone-ai.has-notes {
+  grid-template-columns: 1fr 1fr 44px;
+}
+.phone-ai.has-notes > :last-child {
+  grid-column: auto;
+  height: 40px;
+  width: 44px;
+  padding: 0;
+  font-size: 0;
+  gap: 0;
+  border-radius: 10px;
+}
+.phone-ai.has-notes > :last-child svg {
+  width: 18px;
+  height: 18px;
+}
+/* Idle recorder: just one wide Start recording button (and its ⋯). */
+body.phone .recorder:not(.live):not(.paused):not(:has(.rec-indicator.starting)) .recorder-status {
+  display: none;
+}
+/* Idle, the phone records from the Record button in the top bar; the bar only appears while recording
+   (or when audio is waiting to upload). */
+body.phone .recorder:not(.live):not(.paused):not(:has(.rec-indicator.starting)):not(:has(.queue-chip)) {
+  display: none;
+}
+body.phone .recorder-actions {
+  width: 100%;
+}
+body.phone .recorder-actions > .record-button {
+  flex: 1;
+}
+.sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(25, 28, 25, 0.38);
+  animation: fade 0.15s ease-out;
+}
+/* Polish */
+.tabbar-item svg {
+  box-sizing: content-box;
+  padding: 3px 16px;
+  border-radius: 14px;
+  transition: background 0.15s;
+}
+.tabbar-item.on svg {
+  background: var(--accent-soft);
+}
+.new-option,
+.new-option small {
+  white-space: normal;
+}
+.new-option > span:last-child {
+  min-width: 0;
+}
+.prow:only-child {
+  padding-right: 16px;
+}
+body.phone .transcript .section-bar h2 {
+  display: none;
+}
+body.phone .phone-ai .select-trigger .muted {
+  display: none;
+}
+body.phone .settings-search-key {
+  display: none;
+}
+
+/* Desktop layout chosen on a phone-sized screen: an obvious way back. */
+.phone-return-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px var(--gutter) 0;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.phone-return-banner span {
+  flex: 1;
+  min-width: 160px;
+  color: var(--ink);
+}
+.nav-button.phone-return {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ----- sheet grabber: drag down to close, up to fill the screen */
+.sheet-grip {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  flex-shrink: 0;
+  height: 22px;
+  margin: 0 -8px;
+  touch-action: none;
+  background: inherit;
+  cursor: grab;
+}
+.sheet-grip::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  width: 38px;
+  height: 5px;
+  margin-left: -19px;
+  border-radius: 3px;
+  background: var(--line-strong);
+}
+body.phone .modal .sheet-grip {
+  margin: 0;
+  background: var(--surface);
+}
+body.phone .modal-header {
+  padding-top: 4px;
+}
+body.phone .modal {
+  overscroll-behavior: contain;
+}
+.sheet-scrim,
+body.phone .modal-backdrop {
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+body.sheet-open .page {
+  overflow: hidden;
+}
+
+/* ============================================================ phone: cleaner
+   On the phone the app assumes you know it: explanations and tips are hidden, the controls stay. */
+body.phone .hint:not(.transcript .hint):not(.dash-todos > .hint),
+body.phone .panel-head p.muted,
+body.phone .modal-header p.muted,
+body.phone .menu-item .option-description,
+body.phone .switch-row .hint,
+body.phone .hint-card,
+body.phone .template-chips,
+body.phone .glossary-chip,
+body.phone .version-row .muted,
+body.phone .version-note.muted,
+body.phone .setup-tip,
+body.phone .settings-page > header p,
+body.phone .settings-page .page-header p {
+  display: none !important;
+}
+body.phone .panel-head {
+  margin-bottom: 4px;
+}
+body.phone .panel h2 {
+  font-size: 17px;
+}
+body.phone .menu-item {
+  min-height: 48px;
+}
+body.phone .phone-page .dash-todos {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+body.phone .phone-page .dash-todos .panel-head {
+  position: absolute;
+  top: 18px;
+  right: 10px;
+  margin: 0;
+}
+body.phone .phone-page .dash-todos .panel-head h2 {
+  display: none;
+}
+body.phone .phone-todos {
+  position: relative;
+}
+body.phone .phone-page .todo-list {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0 14px 0 16px;
+}
+body.phone .phone-page .todo-list li,
+body.phone .phone-page .todo-list li:first-child {
+  gap: 14px;
+  align-items: flex-start;
+  padding: 14px 0;
+}
+body.phone .phone-page .todo-list .task-box.inline {
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: 6px;
+}
+body.phone .phone-page .todo-text {
+  margin: 0;
+  padding: 0;
+  gap: 3px;
+  font-size: 16px;
+  line-height: 1.45;
+  min-height: 0;
+}
+body.phone .phone-page .todo-source {
+  font-size: 13px;
+}
+body.phone .phone-page .todo-groups {
+  gap: 14px;
+}
+.new-sheet {
+  gap: 8px;
+}
+.new-option {
+  min-height: 56px;
+}
+
+.phone-ai-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.phone-ai-row .version-row {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+.phone-ai-row .version-note {
+  display: none;
+}
+.phone-ai-row > button {
+  flex-shrink: 0;
+  width: 44px;
+  height: 40px;
+  padding: 0;
+  border-radius: 10px;
+}
+.phone-ai-row > button.primary {
+  font-size: 0;
+  gap: 0;
+}
+.phone-ai-row > button.primary svg {
+  width: 18px;
+  height: 18px;
+}
+.phone-ai-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 16px;
+}
+.phone-ai-sheet label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 8px;
+}
+body.phone .phone-ai-sheet .select-trigger {
+  width: 100%;
+  height: 46px;
+}
+body.phone .phone-ai-sheet .select-trigger .muted {
+  display: none;
+}
+
+/* Nothing scrolls under the status bar: the shell reserves that strip as a solid band,
+   so Safari has no content there to blur. */
+body.phone .phone-app .workspace {
+  padding-top: var(--safe-t);
+  background: var(--bg);
+}
+
+/* ============================================================ phone: the note is the page */
+.phone-top-spacer {
+  flex: 1;
+}
+.phone-record {
+  height: 34px;
+  padding: 0 14px;
+  gap: 7px;
+  border: 0;
+  border-radius: 17px;
+  background: var(--rec-soft);
+  color: var(--rec);
+  box-shadow: none;
+  font-size: 15px;
+  font-weight: 600;
+}
+.phone-rec-badge {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: var(--rec);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+body.rec-active .phone-record {
+  display: none;
+}
+body.rec-active .phone-rec-badge {
+  display: inline-flex;
+}
+.phone-done {
+  display: none;
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 650;
+}
+body.phone-typing .phone-done {
+  display: inline-flex;
+}
+body.phone-typing .phone-top .phone-icon-btn,
+body.phone-typing .phone-record,
+body.phone-typing .meeting-header,
+body.phone-typing .phone-view,
+body.phone-typing .job-strip,
+body.phone-typing .recorder {
+  display: none !important;
+}
+body.phone .meeting.phone {
+  padding: 6px 20px 40vh;
+}
+body.phone .meeting.phone .meeting-meta {
+  font-size: 12.5px;
+}
+body.phone .meeting.phone .meeting-folder {
+  height: 24px;
+  font-size: 12.5px;
+}
+.phone-view {
+  height: 32px;
+  margin: 2px 0 0 -2px;
+  padding: 0 2px;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--accent);
+  font-size: 14.5px;
+  font-weight: 650;
+}
+.phone-view:hover {
+  background: transparent;
+}
+body.phone .meeting.phone .tab-panels {
+  padding-top: 8px;
+}
+/* No toolbar in the note at all: the save state lives in the top bar, so nothing above the text
+   appears or disappears while typing (which made the text jump). */
+body.phone .meeting.phone .editor-toolbar {
+  display: none;
+}
+body.phone .meeting.phone .note-editor,
+body.phone .meeting.phone .note-preview {
+  min-height: 55dvh;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 17px !important;
+  line-height: 1.6 !important;
+  resize: none;
+  overflow: hidden;
+}
+body.phone .meeting.phone .note-editor:focus {
+  outline: none;
+}
+.phone-ai-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 12px 0;
+}
+.phone-ai-empty > button {
+  height: 48px;
+  font-size: 16px;
+  border-radius: 12px;
+}
+.phone-ai-empty .gen-suffix {
+  display: inline !important;
+}
+.phone-ai-empty p {
+  margin: 0;
+  text-align: center;
+}
+body.phone .meeting.phone .find-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+/* ----- top bar: title + save state (shown while typing or once the big title scrolls away) */
+.phone-top {
+  gap: 2px;
+}
+.phone-top-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 4px;
+  line-height: 1.2;
+}
+.phone-top .phone-top-title {
+  display: none;
+  flex: none;
+  max-width: 100%;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--ink);
+}
+body.phone-typing .phone-top .phone-top-title,
+body.phone-scrolled .phone-top .phone-top-title {
+  display: block;
+}
+.phone-save {
+  display: none;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.phone-save.pending,
+.phone-save.bad,
+body.phone-typing .phone-save,
+body.phone-scrolled .phone-save {
+  display: inline-flex;
+}
+.phone-save .save-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+}
+.phone-save.pending .save-dot {
+  background: var(--warn);
+}
+.phone-save.bad {
+  color: var(--bad);
+}
+.phone-save.bad .save-dot {
+  background: var(--bad);
+}
+.phone-back {
+  flex-shrink: 0;
+  max-width: 36%;
+}
+body.phone-typing .phone-back span,
+body.phone-scrolled .phone-back span {
+  display: none;
+}
+body.phone-scrolled .phone-record-label {
+  display: none;
+}
+body.phone-scrolled .phone-record {
+  width: 36px;
+  padding: 0;
+  justify-content: center;
+}
+.phone-edit {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+body[data-phone-tab='transcript'] .phone-edit,
+body[data-phone-tab='history'] .phone-edit,
+body.phone-typing .phone-edit {
+  display: none;
+}
+.phone-record,
+.phone-done {
+  flex-shrink: 0;
+}
+
+/* ----- the app stays inside the visible part of the screen (above the iOS keyboard) */
+body.phone .phone-app {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--vvtop, 0px);
+  height: var(--vvh, 100dvh);
+}
+body.phone .phone-app .workspace {
+  height: 100%;
+}
+
+/* ----- a long meeting title wraps instead of running off the edge */
+body.phone .phone-title {
+  display: block;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.2 !important;
+  min-height: 0 !important;
+  padding: 2px 8px !important;
+}
+/* Horizontal swipes on a list line indent / outdent it (Editor.tsx), so the box only pans vertically. */
+body.phone .meeting.phone .note-editor {
+  touch-action: pan-y;
+}
+/* Every phone page scrolls by itself, even when its content is short, so a swipe never reaches
+   Safari's own page (whose bounce would drag the whole app). */
+html:has(body.phone),
+body.phone {
+  overscroll-behavior: none;
+  overflow: hidden;
+}
+body.phone .phone-app .page {
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+body.phone .phone-app .page > .phone-page,
+body.phone .phone-app .page > .meeting,
+body.phone .phone-app .page > .settings-page {
+  min-height: calc(100% + 1px);
+}
+/* The grip owns the touch: dragging a card never scrolls the page at the same time. */
+.ai-order-grip {
+  touch-action: none;
+}
+body.phone .ai-order-grip {
+  width: 40px;
+  height: 44px;
+}
+
+/* ----- swipe-to-indent strip (phone, while typing) */
+.note-editor-wrap {
+  display: flex;
+  flex-direction: column;
+}
+/* Phone only: desktop keeps the editor as the positioning box for its line-highlight band. */
+.note-editor-wrap.with-swipe {
+  position: relative;
+}
+.swipe-gutter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -20px;
+  width: 50px;
+  z-index: 2;
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.swipe-band {
+  position: absolute;
+  left: -20px;
+  right: -20px;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--accent-soft);
+  mix-blend-mode: multiply;
+  animation: swipe-band 0.7s ease-out forwards;
+}
+.swipe-band.refused {
+  background: var(--bad-soft);
+  animation: swipe-refused 0.45s ease-out forwards;
+}
+@keyframes swipe-band {
+  0%,
+  40% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes swipe-refused {
+  0% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-5px);
+  }
+  40% {
+    transform: translateX(5px);
+  }
+  60% {
+    transform: translateX(-3px);
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(0);
+  }
+}
