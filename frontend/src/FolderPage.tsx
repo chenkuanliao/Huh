@@ -151,7 +151,7 @@ export default function FolderPage({
             </ul>
           )}
         </section>
-        <TodoPanel meetings={meetings} onReveal={onReveal} reloadMeetings={reloadMeetings} description={`Open checkboxes from meetings in ${f.name}. Tick to complete.`} />
+        <TodoPanel meetings={meetings} viewKey={`folder:${f.id}`} onReveal={onReveal} reloadMeetings={reloadMeetings} description={`Open checkboxes from meetings in ${f.name}. Tick to complete.`} />
       </div>
     </div>
   );
