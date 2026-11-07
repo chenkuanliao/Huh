@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Archive, ArchiveRestore, ArrowLeft, BookOpen, Check, ChevronRight, Download, FileAudio, FolderOpen, LayoutDashboard, Ellipsis, ExternalLink, FolderInput, FolderPlus, Lock, Menu as MenuIcon, Mic, Palette, Pencil, Plus, Search, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowLeft, BookOpen, Check, ChevronRight, Download, FileAudio, FolderOpen, LayoutDashboard, Ellipsis, ExternalLink, FolderInput, FolderPlus, Lock, Mic, PanelLeftClose, PanelLeftOpen, Palette, Pencil, Plus, Search, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
 import { api, errorText, Folder, Meeting, send, Settings as SettingsT, Template } from './api';
 import Recorder from './Recorder';
 import Settings, { SettingsSection } from './Settings';
@@ -42,6 +42,28 @@ function readFolding(): Folding {
   } catch {
     return { closed: [], archiveOpen: false };
   }
+}
+/** Whether the sidebar is shown on wide screens (Ctrl/⌘ + B); a per-device convenience. */
+const SIDEBAR_KEY = 'huh:sidebar-open';
+function readSidebar(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+/** Below this width the sidebar is a drawer over the page instead of a column. */
+const NARROW = '(max-width: 820px)';
+const narrowQuery = () => window.matchMedia(NARROW).matches;
+function useNarrow() {
+  const [narrow, setNarrow] = useState(narrowQuery);
+  useEffect(() => {
+    const mq = window.matchMedia(NARROW);
+    const on = () => setNarrow(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return narrow;
 }
 const DRAG_TYPE = 'application/x-huh-meeting';
 /** Drop targets: a folder id, or one of these. */
@@ -126,6 +148,8 @@ function App() {
   const [palette, setPalette] = useState<{ open: boolean; initial: string }>({ open: false, initial: '' });
   const [request, setRequest] = useState<MeetingRequest | null>(null);
   const [drawer, setDrawer] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(readSidebar);
+  const narrow = useNarrow();
   const [refreshKey, setRefreshKey] = useState(0);
   const [creating, setCreating] = useState(false);
   const [views, setViews] = useState<{ notes: 'write' | 'preview'; ai: 'write' | 'preview' }>({ notes: 'write', ai: 'preview' });
@@ -133,7 +157,9 @@ function App() {
   const [backMode, setBackMode] = useState<'up' | 'history'>('up');
   const backModeRef = useRef(backMode);
   backModeRef.current = backMode;
-  const [menu, setMenu] = useState<{ meeting: Meeting; x: number; y: number } | null>(null);
+  /** The meeting actions menu; `page` when opened from a row on Home or a folder page (rename then uses a dialog). */
+  const [menu, setMenu] = useState<{ meeting: Meeting; x: number; y: number; page?: boolean } | null>(null);
+  const [renameDialog, setRenameDialog] = useState<{ id: string; title: string } | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   const [deleting, setDeleting] = useState<Meeting | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -179,6 +205,16 @@ function App() {
       localStorage.setItem(FOLDING_KEY, JSON.stringify(folding));
     } catch {}
   }, [folding]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_KEY, sidebarOpen ? '1' : '0');
+    } catch {}
+  }, [sidebarOpen]);
+  /** Collapse/expand the sidebar column; on narrow screens, open/close the drawer instead. */
+  const toggleSidebar = useCallback(() => {
+    if (narrowQuery()) setDrawer(d => !d);
+    else setSidebarOpen(o => !o);
+  }, []);
 
   /** Shows a view without touching history. */
   const show = useCallback((v: View) => {
@@ -233,6 +269,11 @@ function App() {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || document.body.classList.contains('focus-active')) return;
       const k = e.code;
+      if (k === 'KeyB') {
+        e.preventDefault();
+        toggleSidebar();
+        return;
+      }
       if (k === 'KeyK' || (k === 'KeyF' && pageRef.current !== 'meeting')) {
         e.preventDefault();
         setPalette({ open: true, initial: '' });
@@ -240,7 +281,7 @@ function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [auth?.authenticated]);
+  }, [auth?.authenticated, toggleSidebar]);
 
   // Archived meetings live only in the Archive section; meetings in a folder only under that folder.
   const { byFolder, unfiled, archived } = useMemo(() => {
@@ -416,9 +457,13 @@ function App() {
       ? { label: 'Restore from archive', icon: <ArchiveRestore size={15} />, onSelect: () => void unarchive(m) }
       : { label: 'Archive', hint: 'Keep it, but out of the way', icon: <Archive size={15} />, onSelect: () => void archive(m) },
   ];
-  const meetingActions = (m: Meeting): MenuItem[] => [
+  const meetingActions = (m: Meeting, fromPage = false): MenuItem[] => [
     { label: 'Open', icon: <ExternalLink size={15} />, onSelect: () => open(m.id) },
-    { label: 'Rename', icon: <Pencil size={15} />, onSelect: () => setRenaming({ id: m.id, title: m.title }) },
+    {
+      label: 'Rename',
+      icon: <Pencil size={15} />,
+      onSelect: () => (fromPage ? setRenameDialog({ id: m.id, title: m.title }) : setRenaming({ id: m.id, title: m.title })),
+    },
     ...organizeActions(m),
     { label: 'Export as Markdown', icon: <Download size={15} />, onSelect: () => window.open(`/api/meetings/${m.id}/export?format=md`, '_blank') },
     'divider',
@@ -595,10 +640,13 @@ function App() {
       </div>
     );
 
+  const canGoBack = here.page !== 'home' || (backMode === 'history' && histIndex > 0);
+  const backLabel = viewLabel(backMode === 'history' && histIndex > 0 ? entries.current[histIndex - 1] : parentOf(here));
+
   return (
-    <div className="app">
+    <div className={cx('app', !sidebarOpen && 'sidebar-collapsed')}>
       <div className={cx('drawer-scrim', drawer && 'open')} onClick={() => setDrawer(false)} />
-      <aside className={cx('sidebar', drawer && 'open')}>
+      <aside className={cx('sidebar', drawer && 'open')} inert={narrow ? !drawer : !sidebarOpen}>
         <div className="sidebar-top">
           <button type="button" className="brand brand-button" onClick={goHome} aria-label="huh — go to home">
             <BookOpen size={20} /> huh
@@ -750,41 +798,56 @@ function App() {
       </aside>
 
       <main className="workspace">
-        <header className="mobile-bar">
-          <button type="button" className="icon-button" aria-label="Toggle sidebar" onClick={() => setDrawer(d => !d)}>
-            <MenuIcon size={20} />
+        <header className="topbar">
+          <button
+            type="button"
+            className="icon-button topbar-btn sidebar-toggle"
+            aria-label={(narrow ? drawer : sidebarOpen) ? 'Hide sidebar' : 'Show sidebar'}
+            aria-expanded={narrow ? drawer : sidebarOpen}
+            title={`${(narrow ? drawer : sidebarOpen) ? 'Hide' : 'Show'} sidebar (${isMac ? '⌘' : 'Ctrl'}+B)`}
+            onClick={toggleSidebar}
+          >
+            {(narrow ? drawer : sidebarOpen) ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
           </button>
-          <span className="truncate">{page === 'settings' ? 'Settings' : page === 'home' ? 'Home' : page === 'folder' ? folders.find(f => f.id === folderPage)?.name || 'Folder' : current?.title || 'huh'}</span>
-          <button type="button" className="icon-button" aria-label="New meeting (mobile)" onClick={() => void newMeeting()}>
-            <Plus size={20} />
+          <button
+            type="button"
+            className="icon-button topbar-btn back-button"
+            onClick={back}
+            disabled={!canGoBack}
+            aria-label={canGoBack ? `Back to ${backLabel}` : 'Back'}
+            title={canGoBack ? `Back to ${backLabel} (${isMac ? '⌘[' : 'Alt+←'})` : 'You’re on Home'}
+          >
+            <ArrowLeft size={18} />
           </button>
+          <span className="topbar-sep" aria-hidden />
+          <nav className="crumbs-nav" aria-label="Breadcrumbs">
+            <ol className="crumbs">
+              {trail(here).map((c, idx, all) => (
+                <li key={idx}>
+                  {idx > 0 && <ChevronRight size={13} aria-hidden />}
+                  {idx === all.length - 1 ? (
+                    <span className="truncate" aria-current="page">
+                      {c.label}
+                    </span>
+                  ) : (
+                    <button type="button" className="link truncate" onClick={() => go(c.view)}>
+                      {c.label}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </nav>
+          <div className="topbar-tools">
+            <button type="button" className="icon-button topbar-btn" aria-label="Search everything" title={`Search everything (${isMac ? '⌘' : 'Ctrl'}+K)`} onClick={() => setPalette({ open: true, initial: '' })}>
+              <Search size={17} />
+            </button>
+            <button type="button" className="icon-button topbar-btn topbar-new" aria-label="New meeting" title="New meeting" disabled={creating} onClick={() => void newMeeting()}>
+              {creating ? <Spinner size={15} /> : <Plus size={18} />}
+            </button>
+          </div>
         </header>
-        <div className={cx('page', page !== 'home' && 'has-nav')}>
-          {page !== 'home' && (
-            <nav className={cx('page-nav', `for-${page}`)} aria-label="Navigation">
-              <button type="button" className="ghost sm back-button" onClick={back} title={`Back (${isMac ? '⌘[' : 'Alt+←'})`}>
-                <ArrowLeft size={16} />
-                <span className="truncate">{viewLabel(backMode === 'history' && histIndex > 0 ? entries.current[histIndex - 1] : parentOf(here))}</span>
-              </button>
-              <span className="page-nav-sep" aria-hidden />
-              <ol className="crumbs">
-                {trail(here).map((c, idx, all) => (
-                  <li key={idx}>
-                    {idx > 0 && <ChevronRight size={13} aria-hidden />}
-                    {idx === all.length - 1 ? (
-                      <span className="truncate" aria-current="page">
-                        {c.label}
-                      </span>
-                    ) : (
-                      <button type="button" className="link" onClick={() => go(c.view)}>
-                        {c.label}
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ol>
-            </nav>
-          )}
+        <div className="page" key={page === 'folder' ? `folder-${folderPage}` : page === 'meeting' ? `meeting-${selected}` : page}>
           {page === 'settings' ? (
             <Settings templates={templates} reloadTemplates={reloadTemplates} section={section} onSection={switchSection} onSettingsChange={applySettings} />
           ) : page === 'meeting' && selected ? (
@@ -810,6 +873,7 @@ function App() {
               meetings={byFolder.get(openFolderObj.id) || []}
               creating={creating}
               onOpen={open}
+              onMeetingMenu={(m, x, y) => setMenu({ meeting: m, x, y, page: true })}
               onReveal={(id, field, line, lineText) => {
                 open(id);
                 setRequest({ meetingId: id, tab: field === 'notes' ? 'notes' : 'enhanced', line, lineText, n: Date.now() });
@@ -829,6 +893,7 @@ function App() {
               folderActions={f => folderActions(f, { open: true })}
               creating={creating}
               onOpen={open}
+              onMeetingMenu={(m, x, y) => setMenu({ meeting: m, x, y, page: true })}
               onReveal={(id, field, line, lineText) => {
                 open(id);
                 setRequest({ meetingId: id, tab: field === 'notes' ? 'notes' : 'enhanced', line, lineText, n: Date.now() });
@@ -863,7 +928,7 @@ function App() {
           onClose={() => setMenu(null)}
           label="Meeting actions"
           header={menu && <div className="menu-header truncate">{menu.meeting.title || 'Untitled meeting'}</div>}
-          items={menu ? meetingActions(menu.meeting) : []}
+          items={menu ? meetingActions(menu.meeting, menu.page) : []}
         />
         <ContextMenu
           at={folderMenu && { x: folderMenu.x, y: folderMenu.y }}
@@ -932,6 +997,36 @@ function App() {
                 </button>
               </form>
             </div>
+          )}
+        </Modal>
+        <Modal open={!!renameDialog} onClose={() => setRenameDialog(null)} title="Rename meeting">
+          {renameDialog && (
+            <form
+              className="rename-form"
+              onSubmit={e => {
+                e.preventDefault();
+                const r = renameDialog;
+                setRenameDialog(null);
+                void rename(r.id, r.title);
+              }}
+            >
+              <input
+                autoFocus
+                aria-label="Meeting name"
+                maxLength={500}
+                value={renameDialog.title}
+                onFocus={e => e.target.select()}
+                onChange={e => setRenameDialog({ ...renameDialog, title: e.target.value })}
+              />
+              <div className="row rename-actions">
+                <button type="button" className="ghost" onClick={() => setRenameDialog(null)}>
+                  Cancel
+                </button>
+                <button type="submit" className="primary">
+                  Rename
+                </button>
+              </div>
+            </form>
           )}
         </Modal>
         <ConfirmDialog

@@ -118,6 +118,7 @@ export function MeetingRow({
   folder,
   hideFolder,
   onOpen,
+  onMenu,
 }: {
   meeting: Meeting;
   stats?: MeetingStats;
@@ -125,12 +126,23 @@ export function MeetingRow({
   /** Tint by the folder but leave out its label (e.g. inside that folder's page). */
   hideFolder?: boolean;
   onOpen: (id: string) => void;
+  /** Opens the meeting's actions menu at a point (the ⋯ button, or right-click). */
+  onMenu?: (m: Meeting, x: number, y: number) => void;
 }) {
   const snippet = plain(m.notes) || plain(m.enhanced_notes);
   const recording = m.status === 'recording';
   const Icon = s?.recorded_seconds || recording ? Mic : FileText;
   return (
-    <li>
+    <li
+      className={cx('mrow-item', onMenu && 'has-menu')}
+      onContextMenu={
+        onMenu &&
+        (e => {
+          e.preventDefault();
+          onMenu(m, e.clientX, e.clientY);
+        })
+      }
+    >
       <button type="button" className="mrow" onClick={() => onOpen(m.id)} style={folder ? folderVars(folder) : undefined}>
         <span className={cx('mrow-icon', folder && 'tinted')} aria-hidden>
           {recording ? <span className="rec-dot small-dot" /> : <Icon size={15} />}
@@ -161,6 +173,20 @@ export function MeetingRow({
           {recording ? 'Recording now' : shortWhen(m.updated_at)}
         </span>
       </button>
+      {onMenu && (
+        <button
+          type="button"
+          className="icon-button mrow-menu"
+          aria-label={`Actions for ${m.title || 'Untitled meeting'}`}
+          title="More actions"
+          onClick={e => {
+            const r = e.currentTarget.getBoundingClientRect();
+            onMenu(m, r.right - 210, r.bottom + 4);
+          }}
+        >
+          <Ellipsis size={17} />
+        </button>
+      )}
     </li>
   );
 }
@@ -444,6 +470,7 @@ export default function Dashboard({
   meetings,
   folders,
   onOpen,
+  onMeetingMenu,
   onReveal,
   onOpenFolder,
   onNewFolder,
@@ -457,6 +484,7 @@ export default function Dashboard({
   meetings: Meeting[];
   folders: Folder[];
   onOpen: (id: string) => void;
+  onMeetingMenu?: (m: Meeting, x: number, y: number) => void;
   /** Open a meeting's note at a source line and highlight it. */
   onReveal: (id: string, field: Field, line: number, lineText: string) => void;
   onOpenFolder: (id: string) => void;
@@ -661,7 +689,7 @@ export default function Dashboard({
           ) : (
             <ul className="mrows">
               {recent.map(m => (
-                <MeetingRow key={m.id} meeting={m} stats={data?.meetings[m.id]} folder={m.folder_id ? folderById.get(m.folder_id) : undefined} onOpen={onOpen} />
+                <MeetingRow key={m.id} meeting={m} stats={data?.meetings[m.id]} folder={m.folder_id ? folderById.get(m.folder_id) : undefined} onOpen={onOpen} onMenu={onMeetingMenu} />
               ))}
             </ul>
           )}

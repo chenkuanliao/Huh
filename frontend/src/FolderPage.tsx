@@ -11,6 +11,7 @@ export default function FolderPage({
   folder: f,
   meetings,
   onOpen,
+  onMeetingMenu,
   onReveal,
   onNew,
   onImport,
@@ -23,6 +24,7 @@ export default function FolderPage({
   /** Active (not archived) meetings in this folder. */
   meetings: Meeting[];
   onOpen: (id: string) => void;
+  onMeetingMenu?: (m: Meeting, x: number, y: number) => void;
   onReveal: (id: string, field: 'notes' | 'enhanced_notes', line: number, lineText: string) => void;
   onNew: () => void;
   onImport: () => void;
@@ -144,7 +146,7 @@ export default function FolderPage({
           ) : (
             <ul className="mrows">
               {list.map(m => (
-                <MeetingRow key={m.id} meeting={m} stats={data?.meetings[m.id]} folder={f} hideFolder onOpen={onOpen} />
+                <MeetingRow key={m.id} meeting={m} stats={data?.meetings[m.id]} folder={f} hideFolder onOpen={onOpen} onMenu={onMeetingMenu} />
               ))}
             </ul>
           )}
