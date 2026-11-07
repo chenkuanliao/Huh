@@ -10,6 +10,8 @@ import {
   Mic,
   MicOff,
   Monitor,
+  Pause,
+  Play,
   RefreshCw,
   Smartphone,
   Square,
@@ -21,7 +23,7 @@ import { api, Device, errorText, Meeting, RecordingState, send } from './api';
 import { appendChunk, bufferFile, drain, Pending, resumeFile, saveSession, sessions } from './queue';
 import { Badge, Callout, cx, Menu, Modal, Popover, Segmented, Select, Spinner, Switch, useToast } from './ui';
 
-type Capture = { rec: MediaRecorder; p: Pending; start: number; chain: Promise<void>; acked: boolean; storageFailed?: boolean; viaGraph: boolean };
+type Capture = { rec: MediaRecorder; p: Pending; start: number; pausedAt?: number; pausedMs: number; chain: Promise<void>; acked: boolean; storageFailed?: boolean; viaGraph: boolean };
 
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 const isMobile = isIOS || /Android/.test(navigator.userAgent);
@@ -152,6 +154,7 @@ export default function Recorder({
   const [busy, setBusy] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [offline, setOffline] = useState(false);
   const [silent, setSilent] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -282,7 +285,7 @@ export default function Recorder({
     if (stream.current !== s) return;
     const label = cleanLabel(s.getAudioTracks()[0]?.label || 'Microphone');
     const c = capture.current;
-    if (c?.viaGraph && c.rec.state === 'recording') {
+    if (c?.viaGraph && c.rec.state !== 'inactive') {
       const ok = await prepare('', true);
       if (ok) {
         setMic('');
@@ -292,7 +295,7 @@ export default function Recorder({
     }
     setReadyBoth(false);
     toast(`${label} disconnected.`, 'error');
-    if (c?.rec.state === 'recording') c.rec.stop();
+    if (c && c.rec.state !== 'inactive') c.rec.stop();
   }
 
   function micOff() {
@@ -321,6 +324,16 @@ export default function Recorder({
   }
 
   async function command(cmd: any) {
+    if (cmd.type === 'pause' || cmd.type === 'resume') {
+      const c = capture.current;
+      if (!c || c.p.id !== cmd.recording_id) return;
+      if (cmd.type === 'pause' && c.rec.state === 'recording') c.rec.pause();
+      if (cmd.type === 'resume' && c.rec.state === 'paused') {
+        if (!stream.current?.getAudioTracks().some(t => t.readyState === 'live')) throw Error('Microphone disconnected. Finish this recording to save the audio.');
+        c.rec.resume();
+      }
+      return;
+    }
     if (cmd.type === 'stop') {
       const c = capture.current;
       if (c && c.p.id === cmd.recording_id && c.rec.state !== 'inactive') c.rec.stop();
@@ -346,7 +359,7 @@ export default function Recorder({
     const rec = mime ? new MediaRecorder(recordStream, { mimeType: mime }) : new MediaRecorder(recordStream);
     const p: Pending = { id: cmd.recording_id, token: cmd.token, mime: rec.mimeType, meeting: cmd.meeting_id, label: latest.current.name, count: 0, closed: false };
     await saveSession(p);
-    const c: Capture = { rec, p, start: Date.now(), chain: Promise.resolve(), acked: false, viaGraph };
+    const c: Capture = { rec, p, start: Date.now(), pausedMs: 0, chain: Promise.resolve(), acked: false, viaGraph };
     capture.current = c;
     rec.ondataavailable = e => {
       if (!e.data.size) return;
@@ -359,10 +372,23 @@ export default function Recorder({
         .catch(e => {
           c.storageFailed = true;
           toast(`Couldn’t save audio on this device: ${errorText(e)}`, 'error');
-          if (rec.state === 'recording') rec.stop();
+          if (rec.state !== 'inactive') rec.stop();
         });
     };
+    rec.onpause = () => {
+      c.pausedAt = Date.now();
+      setPaused(true);
+      setNow(Date.now());
+      setSilent(false);
+    };
+    rec.onresume = () => {
+      if (c.pausedAt !== undefined) c.pausedMs += Date.now() - c.pausedAt;
+      c.pausedAt = undefined;
+      setPaused(false);
+      setNow(Date.now());
+    };
     rec.onstop = () => {
+      setPaused(false);
       setCapturing(false);
       c.chain = c.chain
         .then(async () => {
@@ -374,7 +400,7 @@ export default function Recorder({
             return;
           }
           p.closed = true;
-          p.duration = (Date.now() - c.start) / 1000;
+          p.duration = ((c.pausedAt ?? Date.now()) - c.start - c.pausedMs) / 1000;
           await saveSession(p);
           try {
             await drain(p);
@@ -492,7 +518,7 @@ export default function Recorder({
 
   // Elapsed clock and "no sound" detection while capturing.
   useEffect(() => {
-    if (!capturing) return;
+    if (!capturing || paused) return;
     let quietSince = Date.now();
     let buffer: Float32Array<ArrayBuffer> | null = null;
     const timer = setInterval(() => {
@@ -506,7 +532,7 @@ export default function Recorder({
       } else if (Date.now() - quietSince > 15000) setSilent(true);
     }, 500);
     return () => clearInterval(timer);
-  }, [capturing]);
+  }, [capturing, paused]);
 
   // Allow other parts of the app to open the import dialog.
   useEffect(() => {
@@ -523,17 +549,20 @@ export default function Recorder({
     });
   }
 
-  async function control(action: 'start' | 'switch' | 'stop', target?: string) {
+  async function control(action: 'start' | 'switch' | 'stop' | 'pause' | 'resume', target?: string) {
     const m = capture.current?.p.meeting || meeting;
     if (!m) return;
     setBusy(true);
     try {
-      if (action !== 'stop' && (target || deviceId) === deviceId && !readyRef.current) {
+      if ((action === 'start' || action === 'switch') && (target || deviceId) === deviceId && !readyRef.current) {
         const ok = await prepare();
         if (!ok) return;
         await heartbeatNow();
       }
-      setState(await send(`/meetings/${m}/recording-control`, { action, ...(action !== 'stop' ? { device_id: target || deviceId } : {}) }));
+      setState(await send(`/meetings/${m}/recording-control`, { action, ...((action === 'start' || action === 'switch') ? { device_id: target || deviceId } : {}) }));
+      if (capture.current && (action === 'pause' || action === 'resume' || action === 'stop')) {
+        await command({ type: action, recording_id: capture.current.p.id });
+      }
       onChange();
       void tickRef.current();
     } catch (e) {
@@ -563,7 +592,7 @@ export default function Recorder({
   const target = source || deviceId;
   const targetDevice = target === deviceId ? null : devices.find(d => d.id === target);
   const activeDevice = activeId === deviceId ? null : devices.find(d => d.id === activeId);
-  const isLive = status === 'recording' || status === 'switching' || capturing;
+  const isLive = !paused && status !== 'paused' && (status === 'recording' || status === 'switching' || capturing);
   const isStarting = status === 'starting';
 
   const micOptions = useMemo(() => {
@@ -593,10 +622,13 @@ export default function Recorder({
         {meetings.find(m => m.id === recordingMeeting)?.title || 'Open it'} →
       </button>
     );
+  } else if (paused || status === 'paused') {
+    headline = <>Recording paused {capture.current && <span className="elapsed">{clock((capture.current.pausedAt ?? now) - capture.current.start - capture.current.pausedMs)}</span>}</>;
+    sub = state?.user_paused ? 'Keep this tab open. Finish starts transcription and AI notes.' : state?.message || 'The recording device stopped responding.';
   } else if (capturing) {
     headline = (
       <>
-        Recording <span className="elapsed">{clock(now - (capture.current?.start || now))}</span>
+        Recording <span className="elapsed">{clock(now - (capture.current?.start || now) - (capture.current?.pausedMs || 0))}</span>
       </>
     );
     sub = (
@@ -630,14 +662,14 @@ export default function Recorder({
   return (
     <section className={cx('recorder', isLive && 'live', status === 'paused' && 'paused')} aria-label="Recorder">
       <div className="recorder-status">
-        <span className={cx('rec-indicator', capturing && 'live', !capturing && isLive && 'remote', (isStarting || status === 'switching') && 'starting', status === 'paused' && 'paused')}>
+        <span className={cx('rec-indicator', capturing && !paused && status !== 'paused' && 'live', !capturing && isLive && 'remote', (isStarting || status === 'switching') && 'starting', status === 'paused' && 'paused')}>
           {isStarting || status === 'switching' ? <Loader2 size={16} className="spin" /> : status === 'paused' ? <CircleAlert size={16} /> : isLive ? <span className="rec-dot" /> : <Mic size={16} />}
         </span>
         <span className="recorder-text">
           <strong>{headline}</strong>
           <small>{sub}</small>
         </span>
-        {(ready || capturing) && !elsewhere && <LevelMeter analyser={analyser} active={ready} />}
+        {(ready || capturing) && !elsewhere && <LevelMeter analyser={analyser} active={ready && !paused && status !== 'paused'} />}
         {silent && capturing && <Badge tone="warn">No sound detected — check the mic</Badge>}
         {offline && <Badge tone="warn">Reconnecting…</Badge>}
       </div>
@@ -655,18 +687,23 @@ export default function Recorder({
             <ChevronDown size={14} className="muted-icon" />
           </button>
         )}
-        {meeting && !elsewhere && (isLive || isStarting ? (
-          <button type="button" className="stop-button" disabled={busy || status === 'idle'} onClick={() => void control('stop')}>
-            <Square size={13} fill="currentColor" /> Stop
-          </button>
-        ) : (
+        {(meeting || elsewhere) && (capturing || isLive || isStarting || status === 'paused') ? (
+          <>
+            {(isLive || state?.user_paused) && !isStarting && status !== 'switching' && (
+              <button type="button" className="ghost" disabled={busy} onClick={() => void control(state?.user_paused ? 'resume' : 'pause')}>
+                {state?.user_paused ? <Play size={15} /> : <Pause size={15} />} {state?.user_paused ? 'Resume' : 'Pause'}
+              </button>
+            )}
+            {status === 'paused' && !state?.user_paused && (
+              <button type="button" className="record-button" disabled={busy || preparing} onClick={() => void control('start', target)}>Resume recording</button>
+            )}
+            <button type="button" className="stop-button" disabled={busy} onClick={() => void control('stop')}>
+              <Square size={13} fill="currentColor" /> Finish
+            </button>
+          </>
+        ) : meeting && (
           <button type="button" className="record-button" disabled={busy || preparing || (targetDevice ? !targetDevice.ready || !targetDevice.online : false)} onClick={() => void control('start', target)}>
-            {busy || preparing ? <Spinner size={15} /> : <span className="rec-dot static" />} {status === 'paused' ? 'Resume recording' : 'Start recording'}
-          </button>
-        ))}
-        {elsewhere && (
-          <button type="button" className="stop-button" onClick={() => capture.current?.rec.state === 'recording' && void control('stop')}>
-            <Square size={13} fill="currentColor" /> Stop
+            {busy || preparing ? <Spinner size={15} /> : <span className="rec-dot static" />} Start recording
           </button>
         )}
         {meeting && (
@@ -709,7 +746,7 @@ export default function Recorder({
                   />
                   <span className="muted small">this device</span>
                   <span className="spacer" />
-                  {capturing ? <Badge tone="live">Recording</Badge> : ready ? <Badge tone="good">Mic on</Badge> : <Badge>Mic off</Badge>}
+                  {paused ? <Badge tone="warn">Paused</Badge> : capturing ? <Badge tone="live">Recording</Badge> : ready ? <Badge tone="good">Mic on</Badge> : <Badge>Mic off</Badge>}
                 </div>
                 <div className="mic-row">
                   <Select

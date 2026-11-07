@@ -231,9 +231,11 @@ def stop(s, m):
     for r in recordings(s, m.id):
         if r.status in ["starting", "recording"]:
             r.status = "stopping"
+        elif r.status == "ready" and r.device_id:
+            transcribe(s, r)
     state = dict(m.state)
     state.update(
-        status="idle", active_device_id=None, pending_device_id=None, message=None
+        status="idle", active_device_id=None, pending_device_id=None, message=None, user_paused=False
     )
     m.state = state
     m.status = "idle"
@@ -242,6 +244,9 @@ def stop(s, m):
 
 def monitor(s, m):
     state = dict(m.state)
+    # An intentional pause must never activate a backup microphone.
+    if state.get("user_paused"):
+        return
     pending = state.get("pending_device_id")
     active = state.get("active_device_id")
     failed = set()
