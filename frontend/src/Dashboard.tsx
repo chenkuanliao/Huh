@@ -112,6 +112,16 @@ function shortWhen(iso: string) {
   return day === 'Today' || day === 'Yesterday' ? `${day}, ${time}` : day.endsWith('ago') ? d.toLocaleDateString(undefined, { weekday: 'short' }) + `, ${time}` : day;
 }
 
+/** Drag-and-drop wiring from the app shell, so meetings move between Home, folder pages and the sidebar. */
+export type MeetingDnd = {
+  /** Props that make an element drag this meeting. */
+  source: (m: Meeting) => React.HTMLAttributes<HTMLElement> & { draggable: true };
+  /** Props that make an element accept a dropped meeting: a folder id, or the main list / archive. */
+  zone: (target: string) => React.HTMLAttributes<HTMLElement>;
+  /** The drop zone the pointer is over right now. */
+  over: string | null;
+};
+
 /** One meeting as a compact row: title and a one-line preview, details on the right. */
 export function MeetingRow({
   meeting: m,
@@ -120,6 +130,7 @@ export function MeetingRow({
   hideFolder,
   onOpen,
   onMenu,
+  drag,
 }: {
   meeting: Meeting;
   stats?: MeetingStats;
@@ -129,6 +140,8 @@ export function MeetingRow({
   onOpen: (id: string) => void;
   /** Opens the meeting's actions menu at a point (the ⋯ button, or right-click). */
   onMenu?: (m: Meeting, x: number, y: number) => void;
+  /** Lets the row be dragged into a folder. */
+  drag?: MeetingDnd;
 }) {
   const snippet = plain(m.notes) || plain(m.enhanced_notes);
   const recording = m.status === 'recording';
@@ -144,7 +157,7 @@ export function MeetingRow({
         })
       }
     >
-      <button type="button" className="mrow" onClick={() => onOpen(m.id)} style={folder ? folderVars(folder) : undefined}>
+      <button type="button" className="mrow" {...drag?.source(m)} onClick={() => onOpen(m.id)} style={folder ? folderVars(folder) : undefined}>
         <span className={cx('mrow-icon', folder && 'tinted')} aria-hidden>
           {recording ? <span className="rec-dot small-dot" /> : <Icon size={15} />}
         </span>
@@ -493,11 +506,11 @@ export function TodoPanel({
   );
 }
 
-function FolderCard({ folder: f, meetings, stats, onOpen, actions }: { folder: Folder; meetings: Meeting[]; stats: DashData | null; onOpen: () => void; actions: MenuItem[] }) {
+function FolderCard({ folder: f, meetings, stats, onOpen, actions, dnd }: { folder: Folder; meetings: Meeting[]; stats: DashData | null; onOpen: () => void; actions: MenuItem[]; dnd?: MeetingDnd }) {
   const seconds = meetings.reduce((n, m) => n + (stats?.meetings[m.id]?.recorded_seconds || 0), 0);
   const latest = [...meetings].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
   return (
-    <div className="folder-card" style={folderVars(f)}>
+    <div className={cx('folder-card', dnd?.over === f.id && 'drop')} style={folderVars(f)} {...dnd?.zone(f.id)}>
       <button type="button" className="folder-card-main" onClick={onOpen} aria-label={`Open folder ${f.name}`}>
         <FolderTile folder={f} size={42} />
         <strong className="folder-card-name truncate">{f.name}</strong>
@@ -512,7 +525,7 @@ function FolderCard({ folder: f, meetings, stats, onOpen, actions }: { folder: F
               {m.title || 'Untitled meeting'}
             </span>
           ))}
-          {!latest.length && <span className="empty">Drag meetings here from the sidebar</span>}
+          {!latest.length && <span className="empty">Drag meetings here</span>}
         </span>
       </button>
       <Menu
@@ -543,6 +556,7 @@ export default function Dashboard({
   onSettings,
   reloadMeetings,
   creating,
+  dnd,
 }: {
   meetings: Meeting[];
   folders: Folder[];
@@ -558,6 +572,7 @@ export default function Dashboard({
   onSettings: (section: 'ai' | 'transcription') => void;
   reloadMeetings: () => Promise<void>;
   creating: boolean;
+  dnd?: MeetingDnd;
 }) {
   const data = useDashData();
   const [settings, setSettings] = useState<SettingsT | null>(null);
@@ -722,7 +737,7 @@ export default function Dashboard({
         ) : (
           <div className="folder-grid">
             {folders.map(f => (
-              <FolderCard key={f.id} folder={f} meetings={inFolder.get(f.id) || []} stats={data} onOpen={() => onOpenFolder(f.id)} actions={folderActions(f)} />
+              <FolderCard key={f.id} folder={f} meetings={inFolder.get(f.id) || []} stats={data} onOpen={() => onOpenFolder(f.id)} actions={folderActions(f)} dnd={dnd} />
             ))}
             <button type="button" className="folder-card new" onClick={onNewFolder}>
               <FolderPlus size={20} />
@@ -752,7 +767,7 @@ export default function Dashboard({
           ) : (
             <ul className="mrows">
               {recent.map(m => (
-                <MeetingRow key={m.id} meeting={m} stats={data?.meetings[m.id]} folder={m.folder_id ? folderById.get(m.folder_id) : undefined} onOpen={onOpen} onMenu={onMeetingMenu} />
+                <MeetingRow key={m.id} meeting={m} stats={data?.meetings[m.id]} folder={m.folder_id ? folderById.get(m.folder_id) : undefined} onOpen={onOpen} onMenu={onMeetingMenu} drag={dnd} />
               ))}
             </ul>
           )}

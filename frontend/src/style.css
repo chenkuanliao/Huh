@@ -5593,3 +5593,24 @@ button.rail-fact:hover {
     animation: none;
   }
 }
+
+/* Drop a dragged meeting onto a folder card on Home, or onto a folder page's meeting list. */
+.folder-card.drop {
+  border-color: var(--folder);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--folder) 45%, transparent), var(--shadow);
+  transform: translateY(-2px);
+}
+.folder-card.drop::before {
+  opacity: 1;
+  height: 100%;
+}
+.folder-drop {
+  transition: box-shadow 0.12s, border-color 0.12s;
+}
+.folder-drop.drop {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.mrow[draggable='true'] {
+  -webkit-user-drag: element;
+}

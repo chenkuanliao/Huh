@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { AudioLines, Ellipsis, FileAudio, ListTodo, Mic, Palette, Plus, Search, Sparkles } from 'lucide-react';
 import { Folder, Meeting } from './api';
-import { collectTodos, duration, MeetingRow, relativeDay, TodoPanel, useDashData } from './Dashboard';
+import { collectTodos, duration, MeetingDnd, MeetingRow, relativeDay, TodoPanel, useDashData } from './Dashboard';
 import { FolderTile, folderVars } from './folders';
-import { Menu, MenuItem, Segmented, Spinner } from './ui';
+import { cx, Menu, MenuItem, Segmented, Spinner } from './ui';
 
 type Sort = 'recent' | 'oldest' | 'name';
 
@@ -19,6 +19,7 @@ export default function FolderPage({
   actions,
   reloadMeetings,
   creating,
+  dnd,
 }: {
   folder: Folder;
   /** Active (not archived) meetings in this folder. */
@@ -32,6 +33,8 @@ export default function FolderPage({
   actions: MenuItem[];
   reloadMeetings: () => Promise<void>;
   creating: boolean;
+  /** Drag rows to another folder; drop meetings here to move them into this one. */
+  dnd?: MeetingDnd;
 }) {
   const data = useDashData();
   const [filter, setFilter] = useState('');
@@ -106,7 +109,7 @@ export default function FolderPage({
       </header>
 
       <div className="dash-grid">
-        <section className="panel">
+        <section className={cx('panel folder-drop', dnd?.over === f.id && 'drop')} {...dnd?.zone(f.id)}>
           <div className="panel-head folder-list-head">
             <div>
               <h2>Meetings</h2>
@@ -136,7 +139,7 @@ export default function FolderPage({
             <div className="empty-mini folder-empty-state">
               <FolderTile folder={f} size={48} />
               <strong>Nothing in {f.name} yet</strong>
-              <p className="muted">Start a meeting here, or drag meetings onto this folder in the sidebar.</p>
+              <p className="muted">Start a meeting here, or drag meetings here from Home or the sidebar.</p>
               <button type="button" className="primary sm folder-primary" onClick={onNew} disabled={creating}>
                 <Plus size={15} /> New meeting here
               </button>
@@ -146,7 +149,7 @@ export default function FolderPage({
           ) : (
             <ul className="mrows">
               {list.map(m => (
-                <MeetingRow key={m.id} meeting={m} stats={data?.meetings[m.id]} folder={f} hideFolder onOpen={onOpen} onMenu={onMeetingMenu} />
+                <MeetingRow key={m.id} meeting={m} stats={data?.meetings[m.id]} folder={f} hideFolder onOpen={onOpen} onMenu={onMeetingMenu} drag={dnd} />
               ))}
             </ul>
           )}
