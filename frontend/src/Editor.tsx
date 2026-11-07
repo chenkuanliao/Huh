@@ -16,6 +16,34 @@ function countWords(text: string) {
   return cjk + latin;
 }
 
+/** Top offset and height of a source line inside a textarea, accounting for soft wrapping. */
+function measureLine(el: HTMLTextAreaElement, lines: string[], index: number) {
+  const cs = getComputedStyle(el);
+  const mirror = document.createElement('div');
+  const copy = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'tabSize', 'textTransform', 'wordSpacing', 'paddingTop', 'paddingLeft', 'paddingRight'] as const;
+  for (const k of copy) mirror.style[k] = cs[k];
+  Object.assign(mirror.style, {
+    position: 'absolute',
+    visibility: 'hidden',
+    top: '0',
+    left: '-99999px',
+    boxSizing: 'border-box',
+    width: `${el.clientWidth}px`,
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'break-word',
+  });
+  const before = document.createElement('div');
+  before.textContent = lines.slice(0, index).join('\n');
+  const target = document.createElement('div');
+  target.textContent = lines[index] || '\u200b';
+  if (index > 0) mirror.appendChild(before);
+  mirror.appendChild(target);
+  document.body.appendChild(mirror);
+  const result = { top: target.offsetTop, height: target.offsetHeight };
+  mirror.remove();
+  return result;
+}
+
 export default function Editor({
   meeting,
   field,
@@ -28,6 +56,7 @@ export default function Editor({
   onFocusChange,
   title,
   sources,
+  reveal,
 }: {
   meeting: Meeting;
   field: Field;
@@ -42,6 +71,8 @@ export default function Editor({
   title?: string;
   /** Lets hidden source markers in the preview show their transcript lines on hover. */
   sources?: SourceInfo;
+  /** Scroll to a source line (1-based) and flash it; `text` re-finds the line if it moved. */
+  reveal?: { line: number; text?: string; n: number } | null;
 }) {
   const draftKey = `huh-draft-${meeting.id}-${field}`;
   const draft = (() => {
@@ -71,6 +102,56 @@ export default function Editor({
   });
   const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 820px)').matches);
   const [fullscreen, setFullscreen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const [flash, setFlash] = useState<{ box: { top: number; left: number; width: number; height: number }; top: number; height: number; n: number } | null>(null);
+  const band = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!reveal) return;
+    // Wait for the tab panel to be shown and laid out.
+    const timer = setTimeout(show, 40);
+    function show() {
+      const lines = current.current.split('\n');
+      let index = reveal!.line - 1;
+      if (reveal!.text != null && lines[index] !== reveal!.text) {
+        const found = lines.indexOf(reveal!.text);
+        if (found >= 0) index = found;
+      }
+      if (index < 0 || index >= lines.length) return;
+      const el = area.current;
+      if (!el) {
+        // Preview: flash the rendered list item for that line.
+        const item = root.current?.querySelector(`.task-box[data-line="${index + 1}"]`)?.closest('li');
+        if (!item) return;
+        item.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        item.classList.remove('line-flash');
+        void (item as HTMLElement).offsetWidth;
+        item.classList.add('line-flash');
+        item.addEventListener('animationend', () => item.classList.remove('line-flash'), { once: true });
+        return;
+      }
+      // Write view: measure the (possibly wrapped) line, scroll it to the middle, and flash a band over it.
+      const { top, height } = measureLine(el, lines, index);
+      const start = lines.slice(0, index).join('\n').length + (index ? 1 : 0);
+      el.setSelectionRange(start, start + lines[index].length);
+      caret.current = start;
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      el.scrollTo({ top: Math.max(0, top - el.clientHeight / 2 + height / 2), behavior: 'smooth' });
+      const cs = getComputedStyle(el);
+      setFlash({
+        box: { top: el.offsetTop + parseFloat(cs.borderTopWidth), left: el.offsetLeft + parseFloat(cs.borderLeftWidth), width: el.clientWidth, height: el.clientHeight },
+        top,
+        height,
+        n: reveal!.n,
+      });
+    }
+    return () => clearTimeout(timer);
+  }, [reveal?.n]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const followScroll = () => {
+    if (band.current && area.current) band.current.style.transform = `translateY(${-area.current.scrollTop}px)`;
+  };
+  useEffect(followScroll, [flash?.n]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (text !== saved.current) sessionStorage.setItem(draftKey, JSON.stringify({ text, revision: base.current }));
@@ -247,7 +328,7 @@ export default function Editor({
   const isNotes = field === 'notes';
 
   return (
-    <div className="editor">
+    <div className="editor" ref={root}>
       <div className="editor-toolbar">
         <span className={cx('save-state', tone)} role="status">
           <span className="save-dot" />
@@ -317,7 +398,13 @@ export default function Editor({
           onChange={e => setText(e.target.value)}
           onKeyDown={handleEditorKeys}
           onSelect={e => (caret.current = e.currentTarget.selectionStart)}
+          onScroll={followScroll}
         />
+      )}
+      {flash && !focus && !preview && (
+        <div className="line-flash-box" style={flash.box} aria-hidden="true">
+          <div ref={band} key={flash.n} className="line-flash-band" style={{ top: flash.top - 3, height: flash.height + 6 }} onAnimationEnd={() => setFlash(null)} />
+        </div>
       )}
       {focus && createPortal(focusView(), document.body)}
     </div>

@@ -10,7 +10,7 @@ import { DeviceIcon } from './Recorder';
 import { Badge, Callout, cx, Menu, MenuItem, Select, Spinner, useToast } from './ui';
 
 export type Tab = 'notes' | 'enhanced' | 'transcript' | 'history';
-export type MeetingRequest = { tab: Tab; query?: string; recordingId?: string; start?: number; segmentId?: string; n: number };
+export type MeetingRequest = { tab: Tab; query?: string; recordingId?: string; start?: number; segmentId?: string; line?: number; lineText?: string; n: number };
 type SeekRequest = { rec: string; t: number; n: number };
 
 const importAudio = () => window.dispatchEvent(new Event('huh:import-audio'));
@@ -120,6 +120,7 @@ export default function MeetingView({
   const [findInit, setFindInit] = useState<{ text: string; n: number } | null>(null);
   const [findAnchor, setFindAnchor] = useState<string | null>(null);
   const [seek, setSeek] = useState<SeekRequest | null>(null);
+  const [reveal, setReveal] = useState<{ tab: Tab; line: number; text?: string; n: number } | null>(null);
   const idRef = useRef(id);
   idRef.current = id;
   // The first load of a meeting picks its opening tab: AI notes once they exist, otherwise My notes.
@@ -190,6 +191,7 @@ export default function MeetingView({
       setFindOpen(true);
     }
     if (request.recordingId != null && request.start != null) setSeek({ rec: request.recordingId, t: request.start, n: request.n });
+    if (request.line) setReveal({ tab: request.tab, line: request.line, text: request.lineText, n: request.n });
   }, [request?.n, loaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sources = useMemo<SourceInfo | undefined>(
@@ -436,6 +438,7 @@ export default function MeetingView({
               onFocusChange={setFocus}
               title={title}
               sources={sources}
+              reveal={reveal?.tab === t ? reveal : null}
               onSave={() => void refresh()}
             />
             {t === 'enhanced' && !detail.enhanced_notes && !generating && (
