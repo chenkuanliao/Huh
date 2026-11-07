@@ -3,7 +3,7 @@ import Markdown, { SourceInfo } from './Markdown';
 import AudioPlayer, { clock, PlayerHandle } from './AudioPlayer';
 import FindBar from './FindBar';
 import { defaultTitle } from './format';
-import { Archive, Columns2, ListTodo, Maximize2, NotebookPen, PanelRightClose, Rows3, AudioLines, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, Columns2, ListTodo, Maximize2, NotebookPen, PanelRightClose, Rows3, AudioLines, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, LocateFixed, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 import { api, Detail, errorText, Folder, Generation, Job, send, Template } from './api';
 import { FolderGlyph, folderVars } from './folders';
 import Editor from './Editor';
@@ -737,6 +737,8 @@ function MeetingRail({
   );
 }
 
+const LIVE_STATUSES = ['starting', 'recording', 'stopping', 'uploading'];
+
 function Transcript({
   detail,
   busy,
@@ -752,47 +754,71 @@ function Transcript({
   onRetranscribe: (recordingId: string) => void;
   seek: SeekRequest | null;
 }) {
-  const players = useRef<Record<string, PlayerHandle | null>>({});
-  // The line under the playhead, per recording; updated only when it changes.
-  const [active, setActive] = useState<Record<string, string | undefined>>({});
+  const player = useRef<PlayerHandle | null>(null);
+  const recordings = detail.recordings;
+  // One recording is open at a time; the player for it stays pinned above its lines.
+  const [picked, setPicked] = useState<string | null>(seek?.rec ?? null);
+  const current = recordings.find(r => r.id === picked) ?? recordings[0];
+  const rid = current?.id;
+  // The line under the playhead in the open recording; updated only when it changes.
+  const [active, setActive] = useState<string | undefined>();
+  const [playing, setPlaying] = useState(false);
   const bySource = useMemo(() => {
     const map: Record<string, Detail['transcript']> = {};
     for (const s of detail.transcript) (map[s.recording_id] ||= []).push(s);
     return map;
   }, [detail.transcript]);
-  const lineAt = (rid: string, t: number) => {
-    const segs = bySource[rid] || [];
+  const segments = (rid && bySource[rid]) || [];
+  const lineAt = (t: number) => {
     let found: string | undefined;
-    for (const s of segs) {
+    for (const s of segments) {
       if (s.start <= t + 0.05) found = s.id;
       else break;
     }
     return found;
   };
-  const track = (rid: string, t: number) => {
-    const id = lineAt(rid, t);
-    setActive(a => (a[rid] === id ? a : { ...a, [rid]: id }));
+  const track = (t: number) => {
+    const id = lineAt(t);
+    setActive(a => (a === id ? a : id));
   };
 
-  function moveTo(rid: string, t: number, scroll: boolean) {
-    players.current[rid]?.seek(t);
-    track(rid, t);
-    if (!scroll) return;
-    const id = lineAt(rid, t);
+  function reveal(id: string | undefined, flash: boolean) {
     requestAnimationFrame(() => {
       const el = id ? document.getElementById(`seg-${id}`) : null;
       el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      if (!flash) return;
       el?.classList.remove('flash');
       void el?.offsetWidth;
       el?.classList.add('flash');
     });
   }
 
-  useEffect(() => {
-    if (seek) moveTo(seek.rec, seek.t, true);
-  }, [seek?.n]); // eslint-disable-line react-hooks/exhaustive-deps
+  function moveTo(t: number, scroll: boolean) {
+    player.current?.seek(t);
+    track(t);
+    if (scroll) reveal(lineAt(t), true);
+  }
 
-  const needsRun = detail.recordings.some(r => ['ready', 'error'].includes(r.status));
+  function open(id: string) {
+    if (id === rid) return;
+    setPicked(id);
+    setActive(undefined);
+    setPlaying(false);
+  }
+
+  // A citation or search hit: open its recording first, then seek once the player for it is mounted.
+  const handled = useRef<number | null>(null);
+  useEffect(() => {
+    if (!seek || handled.current === seek.n) return;
+    if (seek.rec !== rid) {
+      if (recordings.some(r => r.id === seek.rec)) open(seek.rec);
+      return;
+    }
+    handled.current = seek.n;
+    moveTo(seek.t, true);
+  }, [seek?.n, rid]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const needsRun = recordings.some(r => ['ready', 'error'].includes(r.status));
   const statusTone = (s: string) => (s === 'transcribed' ? 'good' : s === 'error' ? 'bad' : s === 'recording' ? 'live' : 'neutral');
   const statusText: Record<string, string> = {
     starting: 'Starting',
@@ -804,6 +830,10 @@ function Transcript({
     transcribed: 'Transcribed',
     error: 'Failed',
   };
+  const startedAt = (r: { created_at: string }) => new Date(r.created_at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const playable = current ? !LIVE_STATUSES.includes(current.status) : false;
+  const index = current ? recordings.indexOf(current) : -1;
+
   return (
     <section className="transcript" data-find-root>
       <div className="section-bar" data-find-skip>
@@ -838,7 +868,7 @@ function Transcript({
         </button>
       </div>
 
-      {!detail.recordings.length && (
+      {!current && (
         <div className="empty-mini">
           <AudioLines size={28} />
           <strong>No audio yet</strong>
@@ -846,54 +876,98 @@ function Transcript({
         </div>
       )}
 
-      {detail.recordings.map(r => {
-        const segments = bySource[r.id] || [];
-        const playable = !['starting', 'recording', 'stopping', 'uploading'].includes(r.status);
-        return (
-          <article className="source-card" key={r.id}>
-            <header data-find-skip>
-              <DeviceIcon name={r.label || ''} />
-              <strong className="truncate">{r.label || 'Audio'}</strong>
-              <span className="muted small">
-                {new Date(r.created_at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-                {r.duration ? ` · ${time(r.duration)}` : ''}
+      {current && (
+        <>
+          {recordings.length > 1 && (
+            <div className="rec-picker" role="tablist" aria-label="Recordings" data-find-skip>
+              {recordings.map((r, i) => {
+                const on = r.id === rid;
+                return (
+                  <button
+                    key={r.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    className={cx('rec-chip', on && 'on', r.status === 'recording' && 'live', r.status === 'error' && 'bad')}
+                    title={`${r.label || 'Audio'} · ${statusText[r.status] || r.status}`}
+                    onClick={() => open(r.id)}
+                  >
+                    <span className="rec-chip-n">{i + 1}</span>
+                    <DeviceIcon name={r.label || ''} size={14} />
+                    <span className="rec-chip-text">
+                      <span className="truncate">{r.label || 'Audio'}</span>
+                      <span className="rec-chip-sub">
+                        {startedAt(r)}
+                        {r.duration ? ` · ${time(r.duration)}` : ''}
+                      </span>
+                    </span>
+                    {on && playing && <span className="rec-chip-eq" aria-label="Playing" />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div className={cx('rec-dock', playing && 'playing')} data-find-skip>
+            <div className="rec-dock-head">
+              <DeviceIcon name={current.label || ''} />
+              <strong className="truncate">{current.label || 'Audio'}</strong>
+              <span className="muted small nowrap">
+                {recordings.length > 1 && `${index + 1} of ${recordings.length} · `}
+                {startedAt(current)}
+                {current.duration ? ` · ${time(current.duration)}` : ''}
               </span>
               <span className="spacer" />
-              <Badge tone={statusTone(r.status) as any}>{statusText[r.status] || r.status}</Badge>
-              {['transcribed', 'error'].includes(r.status) && (
-                <button type="button" className="ghost xs" title="Run speech recognition on this audio again" onClick={() => onRetranscribe(r.id)}>
-                  <RotateCcw size={13} /> Transcribe again
+              <Badge tone={statusTone(current.status) as any}>{statusText[current.status] || current.status}</Badge>
+              {['transcribed', 'error'].includes(current.status) && (
+                <button type="button" className="ghost xs" title="Run speech recognition on this audio again" onClick={() => onRetranscribe(current.id)}>
+                  <RotateCcw size={13} /> <span className="hide-narrow">Transcribe again</span>
                 </button>
               )}
-            </header>
-            {playable && (
-              <div className="player-wrap" data-find-skip>
+            </div>
+            {playable ? (
+              <div className="rec-dock-player">
                 <AudioPlayer
-                  ref={el => void (players.current[r.id] = el)}
-                  src={`/api/recordings/${r.id}/audio`}
-                  knownDuration={r.duration}
-                  label={r.label || 'recording'}
-                  onTime={t => track(r.id, t)}
+                  key={current.id}
+                  ref={player}
+                  src={`/api/recordings/${current.id}/audio`}
+                  knownDuration={current.duration}
+                  label={current.label || 'recording'}
+                  onTime={track}
+                  onPlayingChange={setPlaying}
                 />
-              </div>
-            )}
-            {segments.length > 0 ? (
-              <div className="segments">
-                {segments.map(s => (
-                  <div className={cx('segment', active[r.id] === s.id && 'active')} key={s.id} id={`seg-${s.id}`}>
-                    <button type="button" className="timestamp" title="Move the playhead here" disabled={!playable} onClick={() => moveTo(r.id, s.start, false)}>
-                      {time(s.start)}
-                    </button>
-                    <p>{s.text}</p>
-                  </div>
-                ))}
+                <button
+                  type="button"
+                  className="icon-button sm"
+                  title="Scroll to the line being played"
+                  aria-label="Scroll to the line being played"
+                  disabled={!active}
+                  onClick={() => reveal(active, false)}
+                >
+                  <LocateFixed size={16} />
+                </button>
               </div>
             ) : (
-              <p className="hint">{r.status === 'transcribed' ? 'No speech was detected in this audio.' : 'The transcript will appear here once processing finishes.'}</p>
+              <p className="hint">Playback is available once this recording finishes uploading.</p>
             )}
-          </article>
-        );
-      })}
+          </div>
+
+          {segments.length > 0 ? (
+            <div className="segments" key={current.id}>
+              {segments.map(s => (
+                <div className={cx('segment', active === s.id && 'active')} key={s.id} id={`seg-${s.id}`}>
+                  <button type="button" className="timestamp" title={playable ? 'Move the playhead here' : undefined} disabled={!playable} onClick={() => moveTo(s.start, false)}>
+                    {time(s.start)}
+                  </button>
+                  <p>{s.text}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="hint">{current.status === 'transcribed' ? 'No speech was detected in this audio.' : 'The transcript will appear here once processing finishes.'}</p>
+          )}
+        </>
+      )}
     </section>
   );
 }
