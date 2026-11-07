@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Archive, ArchiveRestore, ArrowLeft, AudioLines, BookA, BookOpen, Check, ChevronRight, Download, FileAudio, FileText, FolderOpen, History, LayoutDashboard, LayoutTemplate, Ellipsis, ExternalLink, FolderInput, FolderPlus, Lock, Maximize2, Mic, NotebookPen, PanelLeftClose, PanelLeftOpen, Palette, Pencil, Plus, Search, Settings as SettingsIcon, Smartphone, Sparkles, TextSearch, Trash2, X } from 'lucide-react';
-import { api, errorText, Folder, GlossaryEntry, Meeting, send, Settings as SettingsT, Template } from './api';
+import { api, errorText, Folder, forget, GlossaryEntry, Meeting, prefetch, send, Settings as SettingsT, Template } from './api';
 import { GlossaryDialog, GlossaryLayer, mergeGlossaries } from './Glossary';
 import Recorder from './Recorder';
 import AINotices from './AINotices';
@@ -327,9 +327,53 @@ function App() {
     api<SettingsT>('/settings')
       .then(applySettings)
       .catch(() => {});
-    const timer = setInterval(() => void reloadMeetings().catch(() => {}), 15000);
-    return () => clearInterval(timer);
+    const timer = setInterval(() => document.hidden || void reloadMeetings().catch(() => {}), 15000);
+    const onShow = () => document.hidden || void reloadMeetings().catch(() => {});
+    document.addEventListener('visibilitychange', onShow);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onShow);
+    };
   }, [auth?.authenticated, reloadMeetings, reloadTemplates, reloadFolders, toast, applySettings]);
+
+  // Load a meeting as soon as you show intent to open it (hover, touch, keyboard focus on any row marked
+  // data-meeting), so it is usually ready by the time the click lands. Cheap: one shared request, then 304s.
+  useEffect(() => {
+    if (!auth?.authenticated) return;
+    let hover: ReturnType<typeof setTimeout> | undefined;
+    const target = (e: Event) => (e.target as Element | null)?.closest?.('[data-meeting]')?.getAttribute('data-meeting');
+    const now = (e: Event) => {
+      const id = target(e);
+      if (id) prefetch(`/meetings/${id}`);
+    };
+    // A mouse just passing over a list shouldn't fetch every row: wait for it to rest briefly.
+    const over = (e: PointerEvent) => {
+      clearTimeout(hover);
+      const id = e.pointerType === 'mouse' ? target(e) : null;
+      if (id) hover = setTimeout(() => prefetch(`/meetings/${id}`), 80);
+    };
+    document.addEventListener('pointerover', over);
+    document.addEventListener('pointerdown', now, true);
+    document.addEventListener('touchstart', now, { capture: true, passive: true });
+    document.addEventListener('focusin', now);
+    return () => {
+      clearTimeout(hover);
+      document.removeEventListener('pointerover', over);
+      document.removeEventListener('pointerdown', now, true);
+      document.removeEventListener('touchstart', now, { capture: true });
+      document.removeEventListener('focusin', now);
+    };
+  }, [auth?.authenticated]);
+
+  // Once per visit, when the app is idle, warm the three most recently edited meetings: the likeliest to be opened.
+  const warmed = useRef(false);
+  useEffect(() => {
+    if (warmed.current || !meetings.length) return;
+    warmed.current = true;
+    const recent = meetings.filter(m => !m.archived).slice(0, 3);
+    const idle = (fn: () => void) => ('requestIdleCallback' in window ? window.requestIdleCallback(fn, { timeout: 4000 }) : setTimeout(fn, 1500));
+    idle(() => recent.forEach(m => prefetch(`/meetings/${m.id}`, 60000)));
+  }, [meetings]);
 
   useEffect(() => {
     if (!auth?.authenticated) return;
@@ -491,6 +535,7 @@ function App() {
     setDeleteBusy(true);
     try {
       await api(`/meetings/${deleting.id}`, { method: 'DELETE' });
+      forget(`/meetings/${deleting.id}`);
       await forgetMeeting(deleting.id).catch(() => {});
       if (selected === deleting.id && page === 'meeting') leave();
       toast(`Deleted “${deleting.title || 'Untitled meeting'}”.`);
@@ -734,6 +779,7 @@ function App() {
           type="button"
           {...dragSource(m)}
           className={cx('meeting-link', selected === m.id && page === 'meeting' && 'selected')}
+          data-meeting={m.id}
           onClick={() => open(m.id)}
         >
           <span className="truncate">{m.title || 'Untitled meeting'}</span>
@@ -766,6 +812,7 @@ function App() {
   async function lock() {
     try {
       await send('/auth/logout');
+      forget();
       setAuth(await api('/auth/status'));
     } catch (e) {
       toast(errorText(e), 'error');

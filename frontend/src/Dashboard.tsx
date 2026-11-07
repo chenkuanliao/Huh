@@ -157,7 +157,7 @@ export function MeetingRow({
         })
       }
     >
-      <button type="button" className="mrow" {...drag?.source(m)} onClick={() => onOpen(m.id)} style={folder ? folderVars(folder) : undefined}>
+      <button type="button" className="mrow" data-meeting={m.id} {...drag?.source(m)} onClick={() => onOpen(m.id)} style={folder ? folderVars(folder) : undefined}>
         <span className={cx('mrow-icon', folder && 'tinted')} aria-hidden>
           {recording ? <span className="rec-dot small-dot" /> : <Icon size={15} />}
         </span>

@@ -237,7 +237,7 @@ export function PhoneMeetingRow({ meeting: m, folder, onOpen, onMenu }: { meetin
   const recording = m.status === 'recording';
   return (
     <li className="prow-item">
-      <button type="button" className="prow" onClick={() => onOpen(m.id)} style={folder ? folderVars(folder) : undefined}>
+      <button type="button" className="prow" data-meeting={m.id} onClick={() => onOpen(m.id)} style={folder ? folderVars(folder) : undefined}>
         <span className="prow-top">
           <strong className="truncate">{m.title || 'Untitled meeting'}</strong>
           <span className="prow-when">{recording ? <span className="prow-live"><span className="rec-dot small-dot" /> Live</span> : when(m)}</span>
@@ -359,7 +359,7 @@ export function PhoneHome({
         </button>
       </div>
       {!showArchive && live.map(m => (
-        <button key={m.id} type="button" className="phone-banner live" onClick={() => onOpen(m.id)}>
+        <button key={m.id} type="button" className="phone-banner live" data-meeting={m.id} onClick={() => onOpen(m.id)}>
           <span className="rec-dot" /> <span className="truncate">Recording <strong>{m.title || 'Untitled meeting'}</strong></span>
         </button>
       ))}
@@ -524,7 +524,7 @@ export function PhoneSearch({ meetings, folders, actions, onOpen, onOpenFolder }
                 const f = m.folder_id ? byId.get(m.folder_id) : undefined;
                 return (
                   <li key={m.id} className="prow-item">
-                    <button type="button" className="prow" onClick={() => onOpen(m.id, q.trim())} style={f ? folderVars(f) : undefined}>
+                    <button type="button" className="prow" data-meeting={m.id} onClick={() => onOpen(m.id, q.trim())} style={f ? folderVars(f) : undefined}>
                       <span className="prow-top">
                         <strong className="truncate">{m.title || 'Untitled meeting'}</strong>
                         <span className="prow-when">{relativeDay(m.created_at || m.updated_at)}</span>
@@ -566,7 +566,7 @@ export function PhoneSearch({ meetings, folders, actions, onOpen, onOpenFolder }
             <ul className="prows">
               {recent.map(m => (
                 <li key={m.id} className="prow-item">
-                  <button type="button" className="prow compact" onClick={() => onOpen(m.id, '')}>
+                  <button type="button" className="prow compact" data-meeting={m.id} onClick={() => onOpen(m.id, '')}>
                     <span className="prow-top">
                       <strong className="truncate">{m.title || 'Untitled meeting'}</strong>
                       <span className="prow-when">{relativeDay(m.updated_at)}</span>

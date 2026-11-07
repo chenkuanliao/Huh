@@ -1263,3 +1263,38 @@ def test_ai_notices_endpoint(client):
     r = client.get("/api/ai/notices").json()["jobs"]
     assert len(r) == 1 and r[0]["meeting_title"] == "Review" and r[0]["notices"][0]["reason"] == "failed"
     assert "settings" not in r[0]
+
+
+def test_unchanged_reads_get_304_and_responses_are_compressed(client):
+    mid = meeting(client)
+    first = client.get(f"/api/meetings/{mid}")
+    etag = first.headers["etag"]
+    assert first.headers["cache-control"] == "no-store"
+    # Unchanged: an empty 304 that still names the tag.
+    again = client.get(f"/api/meetings/{mid}", headers={"If-None-Match": etag})
+    assert again.status_code == 304 and again.content == b"" and again.headers["etag"] == etag
+    # Changed: the full body and a new tag.
+    body = first.json()
+    client.patch(f"/api/meetings/{mid}", json={"notes": "word " * 400, "notes_revision": body["notes_revision"]})
+    changed = client.get(f"/api/meetings/{mid}", headers={"If-None-Match": etag, "Accept-Encoding": "gzip"})
+    assert changed.status_code == 200 and changed.headers["etag"] != etag
+    assert changed.headers["content-encoding"] == "gzip" and changed.json()["notes"].startswith("word")
+    # Writes and audio are never tagged or compressed.
+    assert "etag" not in client.patch(f"/api/meetings/{mid}", json={"title": "x"}).headers
+    r, _ = upload(client, mid, data=b"\0" * 4096)
+    client.post(f"/api/recordings/{r['recording_id']}/finish", json={"token": r["token"], "chunk_count": 1})
+    audio = client.get(f"/api/recordings/{r['recording_id']}/audio", headers={"Accept-Encoding": "gzip", "Range": "bytes=0-9"})
+    assert audio.status_code == 206 and "content-encoding" not in audio.headers and len(audio.content) == 10
+
+
+def test_built_assets_are_cached_forever_and_the_page_is_revalidated(client, tmp_path, monkeypatch):
+    from app import main
+
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "index-abc123.js").write_text("console.log(1)")
+    (tmp_path / "index.html").write_text("<!doctype html>")
+    monkeypatch.setattr(main, "STATIC_ROOT", tmp_path)
+    asset = client.get("/assets/index-abc123.js")
+    assert asset.status_code == 200 and "immutable" in asset.headers["cache-control"]
+    assert client.get("/").headers["cache-control"] == "no-cache"
+    assert client.get("/some/meeting").headers["cache-control"] == "no-cache"
