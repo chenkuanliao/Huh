@@ -61,6 +61,9 @@ class Meeting(Base):
     enhanced_revision: Mapped[int] = mapped_column(Integer, default=0)
     template_id: Mapped[str | None] = mapped_column(String, nullable=True)
     language: Mapped[str] = mapped_column(String, default="auto")
+    folder_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    # Archived meetings are kept, but hidden from the main list and ranked last in search.
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     created_at: Mapped[float] = mapped_column(Float, default=now)
     updated_at: Mapped[float] = mapped_column(Float, default=now)
     status: Mapped[str] = mapped_column(String, default="idle")
@@ -75,6 +78,13 @@ class Meeting(Base):
             auto_fallback=False,
         ),
     )
+
+
+class Folder(Base):
+    __tablename__ = "folders"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[float] = mapped_column(Float, default=now)
 
 
 class Device(Base):
@@ -182,6 +192,13 @@ def init():
             c.execute(
                 text("ALTER TABLE templates ADD COLUMN kind VARCHAR NOT NULL DEFAULT 'ai'")
             )
+        # Additive migration for installations created before folders and the archive existed.
+        columns = {col["name"] for col in inspect(c).get_columns("meetings")}
+        if "folder_id" not in columns:
+            c.execute(text("ALTER TABLE meetings ADD COLUMN folder_id VARCHAR"))
+            c.execute(text("CREATE INDEX IF NOT EXISTS ix_meetings_folder_id ON meetings (folder_id)"))
+        if "archived" not in columns:
+            c.execute(text("ALTER TABLE meetings ADD COLUMN archived BOOLEAN NOT NULL DEFAULT false"))
         if engine.dialect.name == "postgresql":
             c.execute(
                 text(

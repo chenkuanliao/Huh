@@ -344,7 +344,9 @@ def snippet(text, q, width=70):
 
 @app.get("/api/search")
 def search(q: str = ""):
-    """Search titles, notes, AI notes and transcripts across every meeting."""
+    """Search titles, notes, AI notes and transcripts across every meeting.
+
+    Archived meetings are still searchable, but always rank after everything else."""
     q = q.strip()
     if len(q) < 2:
         return {"results": []}
@@ -357,25 +359,29 @@ def search(q: str = ""):
         for m in s.scalars(
             select(Meeting)
             .where(like(Meeting.title) | like(Meeting.notes) | like(Meeting.enhanced_notes))
-            .order_by(Meeting.updated_at.desc())
+            .order_by(Meeting.archived, Meeting.updated_at.desc())
             .limit(30)
         ):
             for field, text in [("title", m.title), ("notes", m.notes), ("enhanced", m.enhanced_notes)]:
                 if q.lower() in (text or "").lower():
-                    results.append(dict(meeting_id=m.id, title=m.title, field=field, snippet=snippet(text, q), updated_at=public(m)["updated_at"]))
+                    results.append(dict(meeting_id=m.id, title=m.title, field=field, snippet=snippet(text, q),
+                                        updated_at=public(m)["updated_at"], archived=m.archived))
         rows = s.execute(
             select(Segment, Recording, Meeting)
             .join(Recording, Segment.recording_id == Recording.id)
             .join(Meeting, Recording.meeting_id == Meeting.id)
             .where(like(Segment.text), Recording.excluded == False)
-            .order_by(Meeting.updated_at.desc(), Segment.start)
+            .order_by(Meeting.archived, Meeting.updated_at.desc(), Segment.start)
             .limit(60)
         ).all()
         for seg, r, m in rows:
             results.append(
                 dict(meeting_id=m.id, title=m.title, field="transcript", snippet=snippet(seg.text, q),
-                     recording_id=r.id, start=seg.start, segment_id=seg.id, updated_at=public(m)["updated_at"])
+                     recording_id=r.id, start=seg.start, segment_id=seg.id, updated_at=public(m)["updated_at"],
+                     archived=m.archived)
             )
+    # Stable sort: active meetings first, archived last, otherwise keep the order above.
+    results.sort(key=lambda r: r["archived"])
     return {"results": results}
 
 
@@ -433,9 +439,11 @@ def create_meeting(body: dict):
         tid = body.get("template_id")
         if tid:
             ai_template(s, tid)
+        fid = body.get("folder_id")
         m = Meeting(
             title=string(body.get("title", "Untitled meeting"), "title", 500),
             template_id=tid,
+            folder_id=require(s, Folder, valid_id(fid)).id if fid else None,
         )
         s.add(m)
         s.flush()
@@ -500,7 +508,13 @@ def edit_meeting(mid: str, body: dict):
             if body["template_id"]:
                 ai_template(s, body["template_id"])
             m.template_id = body["template_id"]
-        m.updated_at = now()
+        if "folder_id" in body:
+            m.folder_id = require(s, Folder, valid_id(body["folder_id"])).id if body["folder_id"] else None
+        if "archived" in body:
+            m.archived = boolean(body["archived"], "archived")
+        # Filing and archiving are organisation, not edits; keep the meeting's place in "recent".
+        if set(body) - {"folder_id", "archived"}:
+            m.updated_at = now()
         s.flush()
         return public(m)
 
@@ -522,6 +536,47 @@ def delete_meeting(mid: str):
         s.delete(m)
     for r in rs:
         shutil.rmtree(DATA / "recordings" / r.id, ignore_errors=True)
+    return {"ok": True}
+
+
+def folder_name(body):
+    name = string(body.get("name"), "name", 200).strip()
+    if not name:
+        fail("Folder name is required", 422)
+    return name
+
+
+@app.get("/api/folders")
+def list_folders():
+    with tx() as s:
+        return [public(f) for f in s.scalars(select(Folder).order_by(Folder.name, Folder.created_at))]
+
+
+@app.post("/api/folders")
+def create_folder(body: dict):
+    with tx() as s:
+        f = Folder(name=folder_name(body))
+        s.add(f)
+        s.flush()
+        return public(f)
+
+
+@app.patch("/api/folders/{fid}")
+def rename_folder(fid: str, body: dict):
+    with tx() as s:
+        f = require(s, Folder, fid)
+        f.name = folder_name(body)
+        return public(f)
+
+
+@app.delete("/api/folders/{fid}")
+def delete_folder(fid: str):
+    """Removes the folder only; its meetings move back to the main list."""
+    with tx() as s:
+        f = require(s, Folder, fid)
+        for m in s.scalars(select(Meeting).where(Meeting.folder_id == fid)):
+            m.folder_id = None
+        s.delete(f)
     return {"ok": True}
 
 
