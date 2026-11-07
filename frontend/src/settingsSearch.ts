@@ -47,7 +47,7 @@ export const SETTINGS_INDEX: SettingEntry[] = [
     section: 'ai',
     title: 'Language of AI notes',
     description: 'Which language AI notes are written in.',
-    keywords: 'output language english chinese 中文 繁體 简体 japanese korean spanish bilingual translate translation locale writing style',
+    keywords: 'main language per meeting regenerate output language english chinese 中文 繁體 简体 japanese korean spanish bilingual translate translation locale writing style',
   },
   {
     id: 'ai-instructions',

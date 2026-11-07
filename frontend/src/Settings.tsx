@@ -862,7 +862,7 @@ function WritingStyle({ settings, save }: { settings: SettingsT; save: Save }) {
       </div>
       <div className="stack">
         <div data-setting="ai-language">
-        <Field label="Language of AI notes">
+        <Field label="Language of AI notes" hint="The main language every AI note is written in. Names and technical terms can stay in the language they were spoken. You can change it per meeting next to Regenerate.">
           <Select
             ariaLabel="Language of AI notes"
             value={settings.output_language}

@@ -51,6 +51,8 @@ export type Meeting = {
   enhanced_revision: number;
   template_id: string | null;
   language: string;
+  /** Main language of this meeting's AI notes; null follows Settings. */
+  notes_language: string | null;
   folder_id: string | null;
   archived: boolean;
   status: string;
@@ -98,6 +100,7 @@ export type Generation = {
   model: string;
   template_name: string;
   notes_revision: number;
+  output_language?: string | null;
 };
 export type Job = { id: string; kind: string; status: string; progress: number | null; error?: string | null; created_at: string };
 export type Detail = Meeting & {
