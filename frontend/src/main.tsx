@@ -11,7 +11,7 @@ import { forgetMeeting } from './queue';
 
 type MeetingRequest = Req & { meetingId: string };
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-import Dashboard from './Dashboard';
+import Dashboard, { MeetingDnd } from './Dashboard';
 import FolderPage from './FolderPage';
 import { FolderDialog, FolderDraft, FolderGlyph, folderVars, nextFolderColor } from './folders';
 import { Callout, ConfirmDialog, ContextMenu, cx, MenuItem, Modal, Spinner, ToastProvider, useToast } from './ui';
@@ -625,6 +625,22 @@ function App() {
     },
   });
 
+  /** Make a meeting draggable onto any drop zone: sidebar folders, the main list, the archive, or folder cards on Home. */
+  const dragSource = (m: Meeting) => ({
+    draggable: true as const,
+    onDragStart: (e: React.DragEvent) => {
+      e.dataTransfer.setData(DRAG_TYPE, m.id);
+      e.dataTransfer.effectAllowed = 'move';
+      // Reveal the archive drop zone after the drag has started; changing the DOM synchronously can cancel it.
+      setTimeout(() => setDragging(true));
+    },
+    onDragEnd: () => {
+      setDragging(false);
+      setDropTarget(null);
+    },
+  });
+  const dnd: MeetingDnd = { source: dragSource, zone: dropZone, over: dropTarget };
+
   const row = (m: Meeting) =>
     renaming?.id === m.id ? (
       <div key={m.id} className="meeting-row renaming">
@@ -652,17 +668,7 @@ function App() {
       >
         <button
           type="button"
-          draggable
-          onDragStart={e => {
-            e.dataTransfer.setData(DRAG_TYPE, m.id);
-            e.dataTransfer.effectAllowed = 'move';
-            // Reveal the archive drop zone after the drag has started; changing the DOM synchronously can cancel it.
-            setTimeout(() => setDragging(true));
-          }}
-          onDragEnd={() => {
-            setDragging(false);
-            setDropTarget(null);
-          }}
+          {...dragSource(m)}
           className={cx('meeting-link', selected === m.id && page === 'meeting' && 'selected')}
           onClick={() => open(m.id)}
         >
@@ -1060,6 +1066,7 @@ function App() {
               onCustomize={() => setFolderDialog({ folder: openFolderObj })}
               actions={folderActions(openFolderObj, { rename: false })}
               reloadMeetings={reloadMeetings}
+              dnd={dnd}
             />
           ) : (
             <Dashboard
@@ -1079,6 +1086,7 @@ function App() {
               onImport={() => void newMeeting(undefined, true)}
               onSettings={s => openSettings(s)}
               reloadMeetings={reloadMeetings}
+              dnd={dnd}
             />
           )}
         </div>
