@@ -172,7 +172,7 @@ export default function FindBar({
     [query, root, paint, clear],
   );
 
-  // Incoming query (e.g. from global search).
+  // Incoming query (e.g. from another page).
   useEffect(() => {
     if (!initialQuery) return;
     anchor.current = anchorSelector ?? null;

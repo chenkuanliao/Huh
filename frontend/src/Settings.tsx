@@ -913,6 +913,9 @@ function NotesSettings({ settings, save }: { settings: SettingsT; save: Save }) 
     { value: 'preview' as const, label: 'Preview' },
   ];
   const keys: [string, string][] = [
+    ['Ctrl/⌘ + K', 'Search & actions: go to a meeting, folder or setting, or run an action'],
+    ['Ctrl/⌘ + B', 'Show or hide the sidebar'],
+    ['Ctrl/⌘ + F', 'Find in the open meeting tab'],
     ['Tab', 'Indent the line (nests a list item)'],
     ['Shift + Tab', 'Outdent the line'],
     ['Enter', 'Continue the list; on an empty item, end it'],

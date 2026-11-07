@@ -6,7 +6,7 @@ A self-hosted meeting notebook. Take notes during a meeting from any of your dev
 - **Record from any device** — start/stop from one device, record on another (e.g. a phone), switch microphones mid-recording, optional backup devices, resumable uploads.
 - **Local transcription** — [faster-whisper](https://github.com/SYSTRAN/faster-whisper) on an NVIDIA GPU (CPU works too), English, Chinese or mixed-language meetings, optional Traditional Chinese conversion.
 - **AI notes** — generated from your notes and the transcript by the provider you choose (ChatGPT plan sign-in, OpenAI, Anthropic, Google Gemini, OpenRouter, OpenCode Zen, NVIDIA NIM or any OpenAI-compatible/local server). Sources are hidden in the text and shown on hover; every version is kept.
-- **Find anything** — Ctrl/⌘+F inside a meeting, Ctrl/⌘+K across all meetings (titles, notes, AI notes and transcripts).
+- **Search & actions** — Ctrl/⌘+K from anywhere: jump to a meeting, folder or Settings page by name, or run an action (new meeting, import a recording, archive or move the open meeting…). Start with `>` for actions only. Ctrl/⌘+F finds within the open meeting tab.
 - **Dashboard** — this week at a glance, recent meetings and every open to-do.
 
 It is designed for **one owner** on a home server, reachable from your other devices over HTTPS (for example via Tailscale). It is not a multi-user hosted service.
