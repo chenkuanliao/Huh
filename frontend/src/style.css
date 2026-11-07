@@ -3307,7 +3307,7 @@ textarea.find-active {
   background: transparent !important;
 }
 
-/* ============================================================ global search */
+/* ============================================================ search & actions palette (Ctrl/⌘ K) */
 .search-button {
   justify-content: flex-start;
   gap: 8px;
@@ -3367,56 +3367,113 @@ textarea.find-active {
   flex: 1;
 }
 .palette-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   padding: 22px 14px;
   color: var(--muted);
   text-align: center;
 }
-.palette-group {
+.palette-section {
   display: flex;
-  justify-content: space-between;
-  gap: 10px;
+  align-items: center;
+  gap: 6px;
   padding: 10px 10px 4px;
-  font-size: 12px;
-  font-weight: 650;
-  color: var(--ink-2);
-}
-.palette-group span:last-child {
   color: var(--muted);
-  font-weight: 500;
-  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
-.palette-item {
+.palette-section:not(:first-child) {
+  margin-top: 4px;
+}
+.palette-section.archived {
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.palette-cmd {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
-  padding: 8px 10px;
+  min-height: 40px;
+  padding: 6px 10px;
   border-radius: 8px;
   cursor: pointer;
+  color: var(--ink);
 }
-.palette-item.active {
+.palette-cmd.active {
   background: var(--surface-2);
 }
-.palette-field {
+.palette-icon {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
-  width: 92px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+.palette-cmd.active .palette-icon {
+  background: var(--surface);
+}
+/* Delete rows stay quiet: normal text, a red icon, and a soft red wash only while highlighted.
+   (Not the global .danger class: that's the solid red button style.) */
+.palette-cmd.destructive .palette-icon {
+  color: var(--bad);
+  background: color-mix(in srgb, var(--bad-soft) 60%, var(--surface-2));
+}
+.palette-cmd.destructive.active {
+  background: color-mix(in srgb, var(--bad-soft) 55%, var(--surface));
+}
+.palette-cmd.destructive.active .palette-title {
+  color: var(--bad);
+}
+.palette-cmd.destructive.active .palette-icon {
+  background: var(--surface);
+}
+.palette-cmd.archived {
+  color: var(--muted);
+}
+.palette-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.palette-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+.palette-title mark {
+  background: transparent;
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  text-underline-offset: 3px;
+}
+.palette-sub {
   font-size: 12px;
   color: var(--muted);
-  font-variant-numeric: tabular-nums;
 }
-.palette-snippet {
-  font-size: 13.5px;
-  color: var(--ink-2);
-  line-height: 1.45;
-  overflow-wrap: anywhere;
+.palette-shortcut {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 0 5px;
+  color: var(--muted);
 }
-.palette-snippet mark {
-  background: #fbe7a6;
-  color: var(--ink);
-  border-radius: 2px;
-  padding: 0 1px;
+.palette-kind {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.palette-enter {
+  flex-shrink: 0;
+  color: var(--muted);
 }
 .palette-foot {
   display: flex;
@@ -3919,9 +3976,9 @@ button.source-row-item:focus-visible .source-go {
   .palette-foot {
     display: none;
   }
-  .palette-item {
-    flex-direction: column;
-    gap: 2px;
+  .palette-shortcut,
+  .palette-enter {
+    display: none;
   }
   .find-bar {
     width: 100%;
@@ -4082,23 +4139,6 @@ button.source-row-item:focus-visible .source-go {
   flex: 1;
   min-width: 0;
 }
-.palette-divider {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 12px 10px 2px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 650;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.palette-group.archived {
-  color: var(--muted);
-}
-
 /* ============================================================ folder colours & icons */
 /* --folder / --folder-soft are set inline from the folder's colour (see folders.tsx). */
 .folder-tile {

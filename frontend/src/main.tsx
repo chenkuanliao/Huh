@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Archive, ArchiveRestore, ArrowLeft, BookOpen, Check, ChevronRight, Download, FileAudio, FolderOpen, LayoutDashboard, Ellipsis, ExternalLink, FolderInput, FolderPlus, Lock, Mic, PanelLeftClose, PanelLeftOpen, Palette, Pencil, Plus, Search, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowLeft, AudioLines, BookOpen, Check, ChevronRight, Download, FileAudio, FileText, FolderOpen, History, LayoutDashboard, LayoutTemplate, Ellipsis, ExternalLink, FolderInput, FolderPlus, Lock, Maximize2, Mic, NotebookPen, PanelLeftClose, PanelLeftOpen, Palette, Pencil, Plus, Search, Settings as SettingsIcon, Sparkles, TextSearch, Trash2, X } from 'lucide-react';
 import { api, errorText, Folder, Meeting, send, Settings as SettingsT, Template } from './api';
 import Recorder from './Recorder';
 import Settings, { SettingsSection } from './Settings';
-import MeetingView, { MeetingRequest as Req } from './Meeting';
-import SearchPalette, { SearchResult } from './SearchPalette';
+import MeetingView, { MeetingRequest as Req, runMeetingCommand } from './Meeting';
+import CommandPalette, { Command, CommandSection } from './CommandPalette';
 import { defaultTitle } from './format';
 import { forgetMeeting } from './queue';
 
@@ -141,11 +141,9 @@ function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [page, setPage] = useState<'home' | 'folder' | 'meeting' | 'settings'>('home');
   const [folderPage, setFolderPage] = useState<string | null>(null);
-  const pageRef = useRef(page);
-  pageRef.current = page;
   const [section, setSection] = useState<SettingsSection>('ai');
   const query = '';
-  const [palette, setPalette] = useState<{ open: boolean; initial: string }>({ open: false, initial: '' });
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [request, setRequest] = useState<MeetingRequest | null>(null);
   const [drawer, setDrawer] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(readSidebar);
@@ -274,9 +272,9 @@ function App() {
         toggleSidebar();
         return;
       }
-      if (k === 'KeyK' || (k === 'KeyF' && pageRef.current !== 'meeting')) {
+      if (k === 'KeyK') {
         e.preventDefault();
-        setPalette({ open: true, initial: '' });
+        setPaletteOpen(o => !o);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -643,6 +641,123 @@ function App() {
   const canGoBack = here.page !== 'home' || (backMode === 'history' && histIndex > 0);
   const backLabel = viewLabel(backMode === 'history' && histIndex > 0 ? entries.current[histIndex - 1] : parentOf(here));
 
+  async function lock() {
+    try {
+      await send('/auth/logout');
+      setAuth(await api('/auth/status'));
+    } catch (e) {
+      toast(errorText(e), 'error');
+    }
+  }
+
+  /** Everything Ctrl/⌘ + K can find or do, given where the user is. Built only while the palette is open. */
+  const palette = ((): { commands: Command[]; suggestions: CommandSection[] } => {
+    if (!paletteOpen) return { commands: [], suggestions: [] };
+    const keys = isMac ? { find: '⌘F', focus: '⇧⌘F', sidebar: '⌘B', back: '⌘[' } : { find: 'Ctrl+F', focus: 'Ctrl+Shift+F', sidebar: 'Ctrl+B', back: 'Alt+←' };
+    const label = (m: Meeting) => m.title || 'Untitled meeting';
+    const when = (m: Meeting) => new Date(m.created_at || m.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const thisMeeting = page === 'meeting' ? current : undefined;
+    const thisFolder = page === 'folder' ? openFolderObj : undefined;
+
+    // Actions for the page you're on: listed first when nothing's typed, and nudged up when they match
+    // (so on a meeting, “transcript” finds Show transcript before the Transcription settings page).
+    const CONTEXT_BOOST = 20;
+    const context: Command[] = [];
+    if (thisMeeting) {
+      const m = thisMeeting;
+      const tab = (id: 'notes' | 'enhanced' | 'transcript' | 'history', title: string, icon: React.ReactNode, keywords: string[]): Command => ({
+        id: `m-tab-${id}`,
+        kind: 'action',
+        title,
+        subtitle: label(m),
+        keywords: ['tab', ...keywords],
+        icon,
+        boost: CONTEXT_BOOST,
+        run: () => setRequest({ meetingId: m.id, tab: id, n: Date.now() }),
+      });
+      context.push(
+        { id: 'm-find', kind: 'action', title: 'Find in this meeting', subtitle: 'Search the open tab', keywords: ['search', 'find in page'], icon: <TextSearch size={16} />, shortcut: keys.find, boost: CONTEXT_BOOST, run: () => runMeetingCommand('find') },
+        { id: 'm-focus', kind: 'action', title: 'Focus mode', subtitle: 'Write your notes full screen', keywords: ['zen', 'distraction free', 'fullscreen', 'write'], icon: <Maximize2 size={16} />, shortcut: keys.focus, boost: CONTEXT_BOOST, run: () => runMeetingCommand('focus') },
+        { id: 'm-rename', kind: 'action', title: 'Rename this meeting', keywords: ['title', 'name'], icon: <Pencil size={16} />, boost: CONTEXT_BOOST, run: () => setRenameDialog({ id: m.id, title: m.title }) },
+        { id: 'm-move', kind: 'action', title: 'Move this meeting to a folder…', keywords: ['file', 'organize'], icon: <FolderInput size={16} />, boost: CONTEXT_BOOST, run: () => openMove(m) },
+        m.archived
+          ? { id: 'm-unarchive', kind: 'action', title: 'Restore this meeting from the archive', keywords: ['unarchive'], icon: <ArchiveRestore size={16} />, boost: CONTEXT_BOOST, run: () => void unarchive(m) }
+          : { id: 'm-archive', kind: 'action', title: 'Archive this meeting', subtitle: 'Keep it, but out of the way', keywords: ['hide'], icon: <Archive size={16} />, boost: CONTEXT_BOOST, run: () => void archive(m) },
+        { id: 'm-export', kind: 'action', title: 'Export this meeting as Markdown', keywords: ['download', 'md', 'save'], icon: <Download size={16} />, boost: CONTEXT_BOOST, run: () => window.open(`/api/meetings/${m.id}/export?format=md`, '_blank') },
+        { id: 'm-import', kind: 'action', title: 'Import a recording into this meeting', keywords: ['upload', 'audio', 'voice memo', 'm4a', 'file'], icon: <FileAudio size={16} />, boost: CONTEXT_BOOST, run: () => window.dispatchEvent(new Event('huh:import-audio')) },
+        tab('notes', 'Show my notes', <FileText size={16} />, ['notes']),
+        tab('enhanced', 'Show AI notes', <Sparkles size={16} />, ['enhanced', 'summary']),
+        tab('transcript', 'Show transcript', <AudioLines size={16} />, ['audio', 'recording']),
+        tab('history', 'Show version history', <History size={16} />, ['versions', 'older']),
+        { id: 'm-delete', kind: 'action', title: 'Delete this meeting…', keywords: ['remove', 'trash'], icon: <Trash2 size={16} />, danger: true, run: () => setDeleting(m) },
+      );
+    } else if (thisFolder) {
+      const f = thisFolder;
+      context.push(
+        { id: 'f-new', kind: 'action', title: `New meeting in ${f.name}`, keywords: ['create', 'start', 'add'], icon: <Plus size={16} />, boost: CONTEXT_BOOST, run: () => void newMeeting(undefined, false, f.id) },
+        { id: 'f-import', kind: 'action', title: `Import a recording into ${f.name}`, keywords: ['upload', 'audio', 'voice memo', 'm4a', 'file'], icon: <FileAudio size={16} />, boost: CONTEXT_BOOST, run: () => void newMeeting(undefined, true, f.id) },
+        { id: 'f-customize', kind: 'action', title: 'Customize this folder…', subtitle: 'Name, colour and icon', keywords: ['rename', 'color', 'colour', 'icon'], icon: <Palette size={16} />, boost: CONTEXT_BOOST, run: () => setFolderDialog({ folder: f }) },
+        { id: 'f-delete', kind: 'action', title: 'Delete this folder…', subtitle: 'Its meetings move back to the main list', keywords: ['remove', 'trash'], icon: <Trash2 size={16} />, danger: true, run: () => setDeletingFolder(f) },
+      );
+    }
+
+    const sidebarShown = narrow ? drawer : sidebarOpen;
+    const actions: Command[] = [
+      { id: 'new', kind: 'action', title: 'New meeting', subtitle: 'Start a blank meeting', boost: 3, keywords: ['create', 'start', 'add', 'note', 'record'], icon: <Plus size={16} />, run: () => void newMeeting() },
+      { id: 'import', kind: 'action', title: 'Import a recording', subtitle: 'New meeting from an audio file or Voice Memo', keywords: ['upload', 'audio', 'voice memo', 'm4a', 'file', 'new'], icon: <FileAudio size={16} />, run: () => void newMeeting(undefined, true) },
+      { id: 'new-folder', kind: 'action', title: 'New folder', keywords: ['create', 'add', 'organize'], icon: <FolderPlus size={16} />, run: () => setFolderDialog({ folder: null }) },
+      { id: 'home', kind: 'action', title: 'Go to Home', subtitle: 'Dashboard, to-dos and recent meetings', keywords: ['dashboard', 'todo'], icon: <LayoutDashboard size={16} />, run: goHome },
+      ...(canGoBack && backLabel !== 'Home' ? [{ id: 'back', kind: 'action' as const, title: `Go back to ${backLabel}`, keywords: ['previous', 'return'], icon: <ArrowLeft size={16} />, shortcut: keys.back, run: back }] : []),
+      { id: 'settings', kind: 'action', title: 'Open settings', keywords: ['preferences', 'options', 'configure'], icon: <SettingsIcon size={16} />, run: () => openSettings() },
+      { id: 'sidebar', kind: 'action', title: sidebarShown ? 'Hide sidebar' : 'Show sidebar', keywords: ['toggle', 'panel', 'collapse', 'expand', 'menu'], icon: sidebarShown ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />, shortcut: keys.sidebar, run: toggleSidebar },
+      { id: 'lock', kind: 'action', title: 'Lock notebook', subtitle: 'Sign out on this device', keywords: ['log out', 'logout', 'sign out'], icon: <Lock size={16} />, run: () => void lock() },
+    ];
+
+    const settingsPages: Command[] = (
+      [
+        ['ai', 'AI notes', 'Provider, model and output language', <Sparkles size={16} />, ['llm', 'model', 'provider', 'api key', 'language', 'enhance']],
+        ['transcription', 'Transcription', 'Local speech model, language and device', <AudioLines size={16} />, ['speech', 'whisper', 'stt', 'gpu', 'cuda', 'language']],
+        ['templates', 'Templates', 'Formats for notes and AI notes', <LayoutTemplate size={16} />, ['format', 'manage templates']],
+        ['notes', 'Notes & navigation', 'Editor, Back button, shortcuts', <NotebookPen size={16} />, ['editor', 'back button', 'keyboard', 'shortcuts', 'write', 'preview']],
+      ] as [SettingsSection, string, string, React.ReactNode, string[]][]
+    ).map(([id, title, hint, icon, keywords]) => ({ id: `settings-${id}`, kind: 'setting', title, subtitle: `Settings · ${hint}`, keywords: ['settings', 'preferences', ...keywords], icon, run: () => openSettings(id) }));
+
+    const folderItems: Command[] = folders.map(f => {
+      const count = byFolder.get(f.id)?.length || 0;
+      return { id: `folder-${f.id}`, kind: 'folder', title: f.name, subtitle: count ? `${count} meeting${count === 1 ? '' : 's'}` : 'Empty', keywords: ['folder'], icon: <FolderGlyph folder={f} size={16} />, run: () => openFolder(f.id) };
+    });
+
+    const meetingItem = (m: Meeting): Command => {
+      const fname = m.folder_id ? folderName(m.folder_id) : undefined;
+      return {
+        id: `meeting-${m.id}`,
+        kind: 'meeting',
+        title: label(m),
+        subtitle: [fname, when(m), m.status === 'recording' && 'Recording'].filter(Boolean).join(' · '),
+        keywords: fname ? [fname] : [],
+        archived: m.archived,
+        icon: m.status === 'recording' ? <Mic size={16} /> : <FileText size={16} />,
+        run: () => open(m.id),
+      };
+    };
+
+    const recent = [...active]
+      .filter(m => m.id !== thisMeeting?.id)
+      .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''))
+      .slice(0, 5);
+    const pick = (ids: string[]) => ids.map(id => context.find(c => c.id === id)).filter((c): c is Command => !!c);
+
+    return {
+      commands: [...context, ...actions, ...folderItems, ...meetings.map(meetingItem), ...settingsPages],
+      suggestions: [
+        thisMeeting && { label: 'This meeting', items: pick(['m-find', 'm-focus', 'm-rename', 'm-move', 'm-archive', 'm-unarchive', 'm-export']) },
+        thisFolder && { label: thisFolder.name, items: context },
+        { label: 'Recent meetings', items: recent.map(meetingItem) },
+        { label: 'Actions', items: actions.filter(a => ['new', 'import', 'new-folder', 'settings'].includes(a.id)) },
+      ].filter((s): s is CommandSection => !!s),
+    };
+  })();
+
   return (
     <div className={cx('app', !sidebarOpen && 'sidebar-collapsed')}>
       <div className={cx('drawer-scrim', drawer && 'open')} onClick={() => setDrawer(false)} />
@@ -661,9 +776,9 @@ function App() {
         <button type="button" className={cx('nav-button', page === 'home' && 'on')} onClick={goHome}>
           <LayoutDashboard size={17} /> Home
         </button>
-        <button type="button" className="search-button" onClick={() => setPalette({ open: true, initial: '' })}>
+        <button type="button" className="search-button" title="Jump to a meeting, folder or setting, or run an action" onClick={() => setPaletteOpen(true)}>
           <Search size={15} />
-          <span>Search everything</span>
+          <span>Search &amp; actions</span>
           <kbd>{isMac ? '⌘' : 'Ctrl'} K</kbd>
         </button>
         <nav className="meeting-list" aria-label="Meetings">
@@ -783,14 +898,7 @@ function App() {
           <button
             type="button"
             className="nav-button"
-            onClick={async () => {
-              try {
-                await send('/auth/logout');
-                setAuth(await api('/auth/status'));
-              } catch (e) {
-                toast(errorText(e), 'error');
-              }
-            }}
+            onClick={() => void lock()}
           >
             <Lock size={16} /> Lock notebook
           </button>
@@ -839,7 +947,7 @@ function App() {
             </ol>
           </nav>
           <div className="topbar-tools">
-            <button type="button" className="icon-button topbar-btn" aria-label="Search everything" title={`Search everything (${isMac ? '⌘' : 'Ctrl'}+K)`} onClick={() => setPalette({ open: true, initial: '' })}>
+            <button type="button" className="icon-button topbar-btn" aria-label="Search and actions" title={`Search & actions (${isMac ? '⌘' : 'Ctrl'}+K)`} onClick={() => setPaletteOpen(true)}>
               <Search size={17} />
             </button>
             <button type="button" className="icon-button topbar-btn topbar-new" aria-label="New meeting" title="New meeting" disabled={creating} onClick={() => void newMeeting()}>
@@ -905,24 +1013,7 @@ function App() {
             />
           )}
         </div>
-        <SearchPalette
-          open={palette.open}
-          initial={palette.initial}
-          onClose={() => setPalette(p => ({ ...p, open: false }))}
-          onSelect={(r: SearchResult, q: string) => {
-            const tab = r.field === 'transcript' ? 'transcript' : r.field === 'enhanced' ? 'enhanced' : 'notes';
-            open(r.meeting_id);
-            setRequest({
-              meetingId: r.meeting_id,
-              tab,
-              query: r.field === 'title' ? undefined : q,
-              recordingId: r.recording_id,
-              start: r.start,
-              segmentId: r.segment_id,
-              n: Date.now(),
-            });
-          }}
-        />
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={palette.commands} suggestions={palette.suggestions} />
         <ContextMenu
           at={menu && { x: menu.x, y: menu.y }}
           onClose={() => setMenu(null)}

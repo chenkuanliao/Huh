@@ -11,7 +11,12 @@ import { DeviceIcon } from './Recorder';
 import { Badge, Callout, cx, Menu, MenuItem, Select, Spinner, useToast } from './ui';
 
 export type Tab = 'notes' | 'enhanced' | 'transcript' | 'history';
-export type MeetingRequest = { tab: Tab; query?: string; recordingId?: string; start?: number; segmentId?: string; line?: number; lineText?: string; n: number };
+/** Things the command palette can ask the open meeting to do. */
+export type MeetingCommand = 'find' | 'focus';
+const MEETING_COMMAND = 'huh:meeting-command';
+export const runMeetingCommand = (what: MeetingCommand) => window.dispatchEvent(new CustomEvent<MeetingCommand>(MEETING_COMMAND, { detail: what }));
+
+export type MeetingRequest ={ tab: Tab; query?: string; recordingId?: string; start?: number; segmentId?: string; line?: number; lineText?: string; n: number };
 type SeekRequest = { rec: string; t: number; n: number };
 
 const importAudio = () => window.dispatchEvent(new Event('huh:import-audio'));
@@ -137,7 +142,7 @@ export default function MeetingView({
   onOpenFolder?: (id: string) => void;
   onUnarchive?: () => void;
   views: { notes: 'write' | 'preview'; ai: 'write' | 'preview' };
-  /** Open a tab, optionally searching and/or moving the transcript playhead (from global search). */
+  /** Open a tab, optionally searching and/or moving the transcript playhead (from the palette or a to-do link). */
   request?: MeetingRequest | null;
 }) {
   const toast = useToast();
@@ -221,8 +226,24 @@ export default function MeetingView({
         requestAnimationFrame(() => setFindOpen(true));
       }
     };
+    // The same two, run from the command palette.
+    const onCommand = (e: Event) => {
+      const what = (e as CustomEvent<MeetingCommand>).detail;
+      if (what === 'focus') {
+        setTab('notes');
+        setFocus(true);
+      } else if (what === 'find') {
+        setFocus(false);
+        setFindOpen(false);
+        requestAnimationFrame(() => setFindOpen(true));
+      }
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener(MEETING_COMMAND, onCommand);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener(MEETING_COMMAND, onCommand);
+    };
   }, []);
 
   const refresh = useCallback(async () => {
@@ -230,7 +251,7 @@ export default function MeetingView({
     onListChanged();
   }, [load, onListChanged]);
 
-  // Requests from global search: open the tab, search, and move the playhead to the hit.
+  // Requests from elsewhere (palette, dashboard to-dos): open the tab, search, move the playhead, reveal a line.
   const loaded = !!detail;
   useEffect(() => {
     if (!request || !loaded) return;

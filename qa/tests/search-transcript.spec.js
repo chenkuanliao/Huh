@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 
-test('transcript player, find in tab, global search, hidden AI sources, date titles', async ({ page }) => {
+test('transcript player, find in tab, command palette, hidden AI sources, date titles', async ({ page }) => {
   test.setTimeout(120000);
   const { password } = JSON.parse(fs.readFileSync(process.env.HUH_TEST_AUTH_FILE || '../.artifacts/test-auth.json', 'utf8'));
   const errors = [];
@@ -69,16 +69,19 @@ test('transcript player, find in tab, global search, hidden AI sources, date tit
   await page.keyboard.press('Escape');
   await expect(page.locator('.find-mirror')).toHaveCount(0);
 
-  // Global search jumps into the transcript.
+  // Ctrl+K: actions and names, from anywhere (content search isn't in the palette).
   await page.getByRole('button', { name: 'Home', exact: true }).click();
   await page.keyboard.press('Control+k');
-  const palette = page.getByRole('dialog', { name: 'Search everything' });
-  await palette.getByLabel('Search all meetings').fill('country');
-  const hit = palette.locator('.palette-item', { hasText: 'country' }).filter({ has: page.locator('.palette-field', { hasText: /\d:\d\d/ }) }).first();
-  await expect(hit).toBeVisible();
-  await hit.click();
-  await expect(page.getByRole('tab', { name: /^Transcript/ })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByLabel('Find in this tab')).toHaveValue('country');
+  const palette = page.getByRole('dialog', { name: 'Search and actions' });
+  const input = palette.getByLabel('Search meetings, folders, settings and actions');
+  await input.fill('country');
+  await expect(palette.locator('.palette-empty')).toBeVisible();
+  await input.fill('>transcription');
+  await expect(palette.locator('.palette-cmd')).toHaveCount(0);
+  await input.fill('transcription');
+  await page.keyboard.press('Enter');
+  await expect(palette).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Transcription', exact: true }).first()).toBeVisible();
 
   // New meetings are titled with their creation time.
   await page.getByRole('button', { name: 'New meeting', exact: true }).click();
