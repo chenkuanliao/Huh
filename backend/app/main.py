@@ -504,6 +504,9 @@ def edit_meeting(mid: str, body: dict):
         for field in ["title", "language"]:
             if field in body:
                 setattr(m, field, string(body[field], field, 500))
+        if "notes_language" in body:
+            value = body["notes_language"]
+            m.notes_language = string(value, "notes_language", 200).strip() or None if value else None
         if "template_id" in body:
             if body["template_id"]:
                 ai_template(s, body["template_id"])
@@ -605,7 +608,9 @@ def delete_folder(fid: str):
 @app.post("/api/meetings/{mid}/generate")
 def generate_meeting(mid: str, body: dict):
     with tx() as s:
-        return public(generate(s, require(s, Meeting, mid), body.get("template_id")))
+        language = body.get("output_language")
+        language = string(language, "output_language", 200).strip() if language else None
+        return public(generate(s, require(s, Meeting, mid), body.get("template_id"), language or None))
 
 
 @app.post("/api/meetings/{mid}/transcribe")

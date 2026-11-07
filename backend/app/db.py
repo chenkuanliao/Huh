@@ -61,6 +61,8 @@ class Meeting(Base):
     enhanced_revision: Mapped[int] = mapped_column(Integer, default=0)
     template_id: Mapped[str | None] = mapped_column(String, nullable=True)
     language: Mapped[str] = mapped_column(String, default="auto")
+    # Main language for this meeting's AI notes; None follows the "Language of AI notes" setting.
+    notes_language: Mapped[str | None] = mapped_column(String, nullable=True)
     folder_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     # Archived meetings are kept, but hidden from the main list and ranked last in search.
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
@@ -179,6 +181,7 @@ class Generation(Base):
     model: Mapped[str] = mapped_column(String)
     template_name: Mapped[str] = mapped_column(String)
     notes_revision: Mapped[int] = mapped_column(Integer)
+    output_language: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 def init():
@@ -202,6 +205,10 @@ def init():
             c.execute(text("CREATE INDEX IF NOT EXISTS ix_meetings_folder_id ON meetings (folder_id)"))
         if "archived" not in columns:
             c.execute(text("ALTER TABLE meetings ADD COLUMN archived BOOLEAN NOT NULL DEFAULT false"))
+        if "notes_language" not in columns:
+            c.execute(text("ALTER TABLE meetings ADD COLUMN notes_language VARCHAR"))
+        if "output_language" not in {col["name"] for col in inspect(c).get_columns("generations")}:
+            c.execute(text("ALTER TABLE generations ADD COLUMN output_language VARCHAR"))
         folder_columns = {col["name"] for col in inspect(c).get_columns("folders")}
         for col in ("color", "icon"):
             if col not in folder_columns:

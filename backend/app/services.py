@@ -64,14 +64,14 @@ def iso(value):
 
 def public(obj):
     fields = {
-        Meeting: "id title notes notes_revision enhanced_notes enhanced_revision template_id language folder_id archived created_at updated_at status",
+        Meeting: "id title notes notes_revision enhanced_notes enhanced_revision template_id language notes_language folder_id archived created_at updated_at status",
         Folder: "id name color icon created_at",
         Recording: "id meeting_id device_id label mime_type status created_at duration bytes chunk_count",
         Device: "id name meeting_id ready backup_enabled last_seen recording_id",
         Segment: "id recording_id start end text language",
         Template: "id name instructions structure is_default kind",
         Job: "id kind status progress error created_at",
-        Generation: "id content created_at provider model template_name notes_revision",
+        Generation: "id content created_at provider model template_name notes_revision output_language",
     }[type(obj)].split()
     result = {key: getattr(obj, key) for key in fields}
     for key in ["created_at", "updated_at", "last_seen"]:
@@ -120,7 +120,7 @@ def transcribe(s, r):
     return enqueue(s, "transcribe", r.meeting_id, {"recording_id": r.id})
 
 
-def generate(s, m, template_id=None):
+def generate(s, m, template_id=None, output_language=None):
     rs = [r for r in recordings(s, m.id) if not r.excluded]
     segs = list(
         s.scalars(
@@ -144,11 +144,14 @@ def generate(s, m, template_id=None):
     labels = {r.id: r.label for r in rs}
     # 1-based position among all of the meeting's recordings, matching the client's ordering.
     order = {r.id: i for i, r in enumerate(recordings(s, m.id), 1)}
+    cfg = settings(s)
+    # One-off choice > this meeting's choice > the global "Language of AI notes" setting.
+    cfg["output_language"] = output_language or m.notes_language or cfg["output_language"]
     payload = {
         "notes": m.notes,
         "notes_revision": m.notes_revision,
         "enhanced_revision": m.enhanced_revision,
-        "settings": settings(s),
+        "settings": cfg,
         "multi": len(order) > 1,
         "template_name": template.name if template else "Meeting notes",
         "instructions": template.instructions if template else "",

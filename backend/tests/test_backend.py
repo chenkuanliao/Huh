@@ -897,6 +897,45 @@ def test_generation_prompt_requests_hidden_citations(client, monkeypatch):
     assert client.get(f"/api/meetings/{mid}").json()["enhanced_notes"] == "## Decisions\n- Ship on Friday [[1:01]]"
 
 
+def test_main_language_detection():
+    assert worker.main_language(["We ship Friday and review the budget", ""]) == "English"
+    assert worker.main_language(["我們星期五發布，然後檢查預算和時間表", "好的"]) == "Chinese"
+    assert worker.main_language(["我們星期五發布 the new budget plan for Q3", "好"]) is None
+    assert worker.main_language(["", "  "]) is None
+    rule = worker.language_rule("auto", True, ["We ship Friday"])
+    assert "Main language: English" in rule and "Traditional" not in rule
+    zh = worker.language_rule("Traditional Chinese (繁體中文)", True, ["We ship Friday"])
+    assert "Write the whole note in Traditional Chinese" in zh and "original language" in zh
+    assert "Traditional Chinese characters" not in worker.language_rule("English", True, ["我們"])
+
+
+def test_generation_language_override_and_meeting_choice(client, monkeypatch):
+    mid = meeting(client)
+    r, h = upload(client, mid)
+    client.post(f"/api/recordings/{r['recording_id']}/finish", json={"token": r["token"], "chunk_count": 1})
+    with tx() as s:
+        s.add(Segment(recording_id=r["recording_id"], start=1, end=2, text="We ship Friday", raw_text="", language="en"))
+        s.get(Recording, r["recording_id"]).status = "transcribed"
+        s.execute(delete(Job))
+    seen = []
+    monkeypatch.setattr(providers, "infer", lambda cfg, system, prompt: seen.append(system) or "- ok")
+
+    def run(body):
+        client.post(f"/api/meetings/{mid}/generate", json=body)
+        worker.generate_job(worker.claim_job())
+
+    run({})
+    assert "Main language: English" in seen[-1]
+    assert client.patch(f"/api/meetings/{mid}", json={"notes_language": "Traditional Chinese (繁體中文)"}).json()["notes_language"] == "Traditional Chinese (繁體中文)"
+    run({})
+    assert "Write the whole note in Traditional Chinese" in seen[-1]
+    run({"output_language": "Japanese"})
+    assert "Write the whole note in Japanese" in seen[-1]
+    gens = client.get(f"/api/meetings/{mid}").json()["generations"]
+    assert [g["output_language"] for g in gens][:2] == ["Japanese", "Traditional Chinese (繁體中文)"]
+    assert client.patch(f"/api/meetings/{mid}", json={"notes_language": None}).json()["notes_language"] is None
+
+
 def test_search_across_meetings(client):
     mid = meeting(client)
     client.patch(f"/api/meetings/{mid}", json={"notes": "Discuss the 100% budget_plan", "notes_revision": 0})

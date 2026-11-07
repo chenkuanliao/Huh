@@ -7,6 +7,7 @@ import { Archive, Columns2, ListTodo, Maximize2, NotebookPen, PanelRightClose, R
 import { api, Detail, errorText, Folder, Generation, Job, send, Template } from './api';
 import { FolderGlyph, folderVars } from './folders';
 import Editor from './Editor';
+import { noteLanguageLabel, OUTPUT_LANGUAGES } from './providers';
 import { DeviceIcon } from './Recorder';
 import { Badge, Callout, cx, Menu, MenuItem, Select, Spinner, useToast } from './ui';
 
@@ -129,8 +130,11 @@ export default function MeetingView({
   folder,
   onOpenFolder,
   onUnarchive,
+  defaultNoteLanguage = 'auto',
 }: {
   id: string;
+  /** The "Language of AI notes" setting, used when the meeting has no choice of its own. */
+  defaultNoteLanguage?: string;
   templates: Template[];
   refreshKey: number;
   onListChanged: () => void;
@@ -346,6 +350,21 @@ export default function MeetingView({
     }
   }
 
+  /** Main language for this meeting's AI notes; "default" follows Settings. */
+  const languageValue = detail.notes_language || 'default';
+  const languageOptions = [
+    { value: 'default', label: `Settings default`, description: noteLanguageLabel(defaultNoteLanguage) },
+    ...OUTPUT_LANGUAGES,
+    ...(detail.notes_language && !OUTPUT_LANGUAGES.some(o => o.value === detail.notes_language) ? [{ value: detail.notes_language, label: detail.notes_language }] : []),
+  ];
+
+  async function setNotesLanguage(v: string) {
+    const value = v === 'default' ? null : v;
+    if (value === (detail!.notes_language || null)) return;
+    await patch({ notes_language: value });
+    if (detail!.generations.length) toast(`Next AI notes will be written in ${noteLanguageLabel(value || defaultNoteLanguage)}. Click Regenerate to redo them now.`, 'success');
+  }
+
   /** Make a saved AI version the one shown in AI notes (syncs to every device). */
   async function showVersion(g: Generation, quiet = false) {
     try {
@@ -397,6 +416,25 @@ export default function MeetingView({
             Edit AI templates…
           </button>
         }
+      />
+      <Select
+        ariaLabel="Main language of AI notes"
+        size="sm"
+        value={languageValue}
+        placement="bottom-end"
+        minWidth={260}
+        options={languageOptions}
+        onChange={v => void setNotesLanguage(v)}
+        searchable
+        allowCustom
+        customLabel={q => `Use “${q}”`}
+        renderValue={o => (
+          <>
+            <Languages size={14} className="muted-icon" />{' '}
+            <span className="truncate">{o?.value === 'default' || !o ? noteLanguageLabel(defaultNoteLanguage) : o.label}</span>
+          </>
+        )}
+        footer={<small className="muted">Main language of the AI notes. Names and terms can stay as spoken.</small>}
       />
       <button type="button" className="primary sm" disabled={busy || generating || !hasTranscript} title={hasTranscript ? undefined : 'Record or import audio first'} onClick={() => void generate()}>
         {generating ? <Spinner size={14} /> : <Sparkles size={15} />} {detail.generations.length ? 'Regenerate' : 'Generate'}
@@ -1016,7 +1054,8 @@ function HistoryView({ detail, onShow, sources }: { detail: Detail; onShow: (g: 
               {shown?.id === x.id && <Badge tone="good">Showing</Badge>}
             </strong>
             <small>
-              {x.template_name} · {x.model || x.provider}
+              {x.template_name}
+              {x.output_language ? ` · ${noteLanguageLabel(x.output_language)}` : ''} · {x.model || x.provider}
             </small>
           </button>
         ))}
@@ -1026,6 +1065,7 @@ function HistoryView({ detail, onShow, sources }: { detail: Detail; onShow: (g: 
           <div className="section-bar">
             <span className="muted small">
               {g.provider} / {g.model} · {g.template_name}
+              {g.output_language ? ` · ${noteLanguageLabel(g.output_language)}` : ''}
             </span>
             <span className="spacer" />
             {shown?.id === g.id ? (

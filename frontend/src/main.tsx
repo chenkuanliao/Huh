@@ -150,6 +150,7 @@ function App() {
   const narrow = useNarrow();
   const [refreshKey, setRefreshKey] = useState(0);
   const [creating, setCreating] = useState(false);
+  const [noteLanguage, setNoteLanguage] = useState('auto');
   const [views, setViews] = useState<{ notes: 'write' | 'preview'; ai: 'write' | 'preview' }>({ notes: 'write', ai: 'preview' });
   /** What Back does (Settings → Notes & navigation): "up" a level, or to the previously visited page. */
   const [backMode, setBackMode] = useState<'up' | 'history'>('up');
@@ -182,6 +183,7 @@ function App() {
     (s: SettingsT) => {
       setViews({ notes: s.notes_view === 'preview' ? 'preview' : 'write', ai: s.ai_notes_view === 'write' ? 'write' : 'preview' });
       setBackMode(s.back_behavior === 'history' ? 'history' : 'up');
+      setNoteLanguage(s.output_language || 'auto');
     },
     [],
   );
@@ -972,6 +974,7 @@ function App() {
               onUnarchive={() => current && void unarchive(current)}
               onManageTemplates={() => openSettings('templates')}
               views={views}
+              defaultNoteLanguage={noteLanguage}
               request={request?.meetingId === selected ? request : null}
             />
           ) : page === 'folder' && openFolderObj ? (

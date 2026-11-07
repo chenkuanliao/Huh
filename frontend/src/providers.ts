@@ -107,8 +107,14 @@ export const STT_MODELS: Record<string, { label: string; size: string; descripti
   tiny: { label: 'Tiny', size: '75 MB', description: 'For testing only.' },
 };
 
+/** Short name for a "Language of AI notes" value (custom values show as typed). */
+export function noteLanguageLabel(value: string | null | undefined) {
+  if (!value) return 'Match the meeting';
+  return OUTPUT_LANGUAGES.find(o => o.value === value)?.label || value;
+}
+
 export const OUTPUT_LANGUAGES = [
-  { value: 'auto', label: 'Match the meeting', description: 'Write in the language that was spoken' },
+  { value: 'auto', label: 'Match the meeting', description: 'The language most of the meeting was in' },
   { value: 'English', label: 'English' },
   { value: 'Traditional Chinese (繁體中文)', label: '繁體中文', description: 'Traditional Chinese' },
   { value: 'Simplified Chinese (简体中文)', label: '简体中文', description: 'Simplified Chinese' },
