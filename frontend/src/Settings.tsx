@@ -1139,8 +1139,9 @@ function TranscriptionSettings({ settings, save }: { settings: SettingsT; save: 
 
 function NotesSettings({ settings, save }: { settings: SettingsT; save: Save }) {
   const views = [
-    { value: 'write' as const, label: 'Write' },
-    { value: 'preview' as const, label: 'Preview' },
+    { value: 'live' as const, label: 'Live' },
+    { value: 'write' as const, label: 'Source' },
+    { value: 'preview' as const, label: 'Read' },
   ];
   const keys: [string, string][] = [
     ['Ctrl/⌘ + K', 'Search & actions: go to a meeting, folder or setting, or run an action'],
@@ -1150,7 +1151,7 @@ function NotesSettings({ settings, save }: { settings: SettingsT; save: Save }) 
     ['Shift + Tab', 'Outdent the line'],
     ['Enter', 'Continue the list; on an empty item, end it'],
     ['Esc', 'Leave the editor (then Tab moves focus)'],
-    ['- [ ] task', 'Checkbox — click it in Preview to tick it'],
+    ['- [ ] task', 'Checkbox — click it in Live or Read to tick it'],
     ['# / ## Heading', 'Headings'],
   ];
   return (
@@ -1159,7 +1160,7 @@ function NotesSettings({ settings, save }: { settings: SettingsT; save: Save }) 
         <div className="panel-head">
           <div>
             <h2>When a meeting opens</h2>
-            <p className="muted">Choose whether each tab starts in writing mode or as formatted text. You can always switch.</p>
+            <p className="muted">Live formats as you type and shows the Markdown only on the line you’re editing. Source is plain Markdown; Read is formatted and can’t be typed in. You can always switch.</p>
           </div>
         </div>
         <div className="setting-line">

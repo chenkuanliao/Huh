@@ -199,8 +199,8 @@ export type Settings = {
   /** After a recording finishes, transcribe and write AI notes right away (otherwise wait for a tap). */
   auto_process: boolean;
   provider_models: Record<string, string>;
-  notes_view: 'write' | 'preview';
-  ai_notes_view: 'write' | 'preview';
+  notes_view: 'live' | 'write' | 'preview';
+  ai_notes_view: 'live' | 'write' | 'preview';
   back_behavior: 'up' | 'history';
   glossary: GlossaryEntry[];
   /** Ranked models: AI notes use the first one that works and fall back down the list. */

@@ -2477,6 +2477,36 @@ textarea.mono {
   padding: 10px 12px;
   overflow-x: auto;
 }
+.code-wrap {
+  position: relative;
+}
+.code-copy {
+  font: 500 12px/1 system-ui, sans-serif;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 4px 8px;
+  height: auto;
+  min-height: 0;
+  box-shadow: none;
+  cursor: pointer;
+}
+.code-copy:hover {
+  color: var(--ink);
+}
+.code-wrap .code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.code-wrap:hover .code-copy,
+.code-wrap .code-copy:focus-visible,
+body.phone .code-wrap .code-copy {
+  opacity: 1;
+}
 .markdown pre code {
   border: 0;
   background: none;
@@ -7368,4 +7398,207 @@ body.phone .ai-order-grip {
 }
 body.phone .job .job-actions .ghost {
   min-height: 36px;
+}
+
+/* ============================================================ live editor (Editor → Live; live.ts) */
+.note-live {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--ink);
+}
+.note-live-main {
+  min-height: max(46vh, 320px);
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.12s, box-shadow 0.12s;
+  cursor: text;
+}
+.note-live-main:focus-within {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow);
+}
+.note-live .cm-editor {
+  min-height: inherit;
+  background: transparent;
+}
+.note-live-main .cm-editor {
+  min-height: calc(max(46vh, 320px) - 38px);
+}
+.note-live .cm-editor.cm-focused {
+  outline: none;
+}
+.note-live .cm-scroller {
+  font-family: var(--font);
+  line-height: inherit;
+  overflow: visible;
+}
+.note-live .cm-content {
+  padding: 0;
+  caret-color: var(--ink);
+}
+.note-live .cm-line {
+  padding: 0;
+}
+.note-live .cm-placeholder {
+  color: var(--muted);
+}
+.note-live .cm-selectionBackground,
+.note-live .cm-focused .cm-selectionBackground {
+  background: var(--accent-soft) !important;
+}
+.note-live .cm-lp-h {
+  font-weight: 650;
+  line-height: 1.4;
+  padding-top: 0.5em;
+}
+.note-live .cm-lp-h1 {
+  font-size: 22px;
+}
+.note-live .cm-lp-h2 {
+  font-size: 17px;
+}
+.note-live .cm-lp-h3,
+.note-live .cm-lp-h4,
+.note-live .cm-lp-h5,
+.note-live .cm-lp-h6 {
+  font-size: 1em;
+}
+.note-live .cm-lp-strong {
+  font-weight: 650;
+}
+.note-live .cm-lp-em {
+  font-style: italic;
+}
+.note-live .cm-lp-strike {
+  text-decoration: line-through;
+}
+.note-live .cm-lp-dim,
+.note-live .cm-lp-source,
+.note-live .cm-lp-olmark {
+  color: var(--muted);
+}
+.note-live .cm-lp-code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: var(--surface-2);
+  border-radius: 4px;
+  padding: 1px 3px;
+}
+.note-live .cm-lp-codeblock {
+  font-family: var(--mono);
+  font-size: 13.5px;
+  background: var(--surface-2);
+  padding: 0 10px !important;
+}
+.note-live .cm-lp-fence-open {
+  padding-top: 4px !important;
+}
+.note-live .cm-lp-codehead {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+  vertical-align: middle;
+}
+.note-live .cm-lp-codelang {
+  color: var(--muted);
+  font-size: 12px;
+}
+.note-live .cm-lp-fence-close {
+  font-size: 0;
+  line-height: 0;
+  height: 8px;
+}
+.note-live .cm-lp-table {
+  font-family: var(--mono);
+  font-size: 13.5px;
+}
+.note-live .cm-lp-quote {
+  border-left: 3px solid var(--line-strong);
+  padding-left: 12px !important;
+  color: var(--ink-2);
+}
+.note-live .cm-lp-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.note-live .cm-lp-bullet {
+  display: inline-block;
+  min-width: 0.6em;
+  color: var(--muted);
+  text-align: center;
+  font-weight: 700;
+}
+.note-live .cm-lp-check {
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  margin: 0 1px 0 0;
+  vertical-align: -2.5px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.note-live .cm-lp-check:hover {
+  border-color: var(--accent);
+}
+.note-live .cm-lp-check.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.note-live .cm-lp-check.checked::after {
+  content: '';
+  width: 4px;
+  height: 8px;
+  margin-top: -2px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.note-live .cm-lp-done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.note-live .cm-lp-hr {
+  display: inline-block;
+  width: 100%;
+  vertical-align: middle;
+  border-top: 1px solid var(--line-strong);
+}
+.note-live .cm-lp-flash {
+  border-radius: 6px;
+  animation: line-flash 2.4s ease-out;
+}
+.note-live .find-hit {
+  background: #fbe7a6;
+  border-radius: 2px;
+}
+.note-live .find-hit.current {
+  background: #f2b33d;
+}
+.focus-live {
+  width: 100%;
+  max-width: 760px;
+  padding: 48px 40px 40vh;
+  font-size: 17px;
+  line-height: 1.8;
+}
+@media (max-width: 820px) {
+  .note-live-main {
+    min-height: 50vh;
+    padding: 14px;
+  }
+  .focus-live {
+    padding: 20px 18px 40vh;
+    font-size: 16px;
+  }
 }

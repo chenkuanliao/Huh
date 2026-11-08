@@ -7,10 +7,11 @@ import Recorder from './Recorder';
 import AINotices from './AINotices';
 import Settings, { SettingsSection } from './Settings';
 import MeetingView, { MeetingRequest as Req, runMeetingCommand } from './Meeting';
+import type { NoteView } from './Editor';
 import CommandPalette, { Command, CommandSection } from './CommandPalette';
 import { defaultTitle } from './format';
 import { forgetMeeting } from './queue';
-import { NewSheet, PhoneAction, PhoneFolder, PhoneHome, PhoneSearch, PhoneSettingsFooter, PhoneTab, PhoneTabBar, PhoneTodos, PhoneTopBar, usePhoneLayout, usePhoneScrolled, usePhoneTyping, useSaveState } from './Mobile';
+import { NewSheet, PhoneAction, PhoneFolder, PhoneHome, PhoneSearch, PhoneSettingsFooter, PhoneTab, PhoneTabBar, PhoneTodos, PhoneTopBar, usePhoneLayout, usePhoneScrolled, useSaveState } from './Mobile';
 
 type MeetingRequest = Req & { meetingId: string };
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -170,7 +171,6 @@ function App() {
   const narrow = useNarrow();
   const layout = usePhoneLayout();
   const phone = layout.phone;
-  usePhoneTyping(phone, `${page}:${selected ?? ''}`);
   const saveState = useSaveState(phone && page === 'meeting' ? selected : null);
   usePhoneScrolled(phone, `${page}:${selected}:${folderPage}`);
   /** The phone's “New meeting” sheet (record / write / import). */
@@ -179,7 +179,7 @@ function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [creating, setCreating] = useState(false);
   const [noteLanguage, setNoteLanguage] = useState('auto');
-  const [views, setViews] = useState<{ notes: 'write' | 'preview'; ai: 'write' | 'preview' }>({ notes: 'write', ai: 'preview' });
+  const [views, setViews] = useState<{ notes: NoteView; ai: NoteView }>({ notes: 'live', ai: 'preview' });
   /** What Back does (Settings → Notes & navigation): "up" a level, or to the previously visited page. */
   const [backMode, setBackMode] = useState<'up' | 'history'>('up');
   const backModeRef = useRef(backMode);
@@ -215,7 +215,8 @@ function App() {
   const foldersRef = useRef<Folder[] | null>(null);
   const applySettings = useCallback(
     (s: SettingsT) => {
-      setViews({ notes: s.notes_view === 'preview' ? 'preview' : 'write', ai: s.ai_notes_view === 'write' ? 'write' : 'preview' });
+      const view = (v: string, fallback: NoteView): NoteView => (v === 'live' || v === 'write' || v === 'preview' ? v : fallback);
+      setViews({ notes: view(s.notes_view, 'live'), ai: view(s.ai_notes_view, 'preview') });
       setBackMode(s.back_behavior === 'history' ? 'history' : 'up');
       setNoteLanguage(s.output_language || 'auto');
       setGlobalGlossary(s.glossary || []);
