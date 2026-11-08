@@ -1,39 +1,93 @@
 # Huh
 
-A self-hosted meeting notebook. Take notes during a meeting from any of your devices, record from your laptop or phone, get a private transcript produced on your own GPU, and turn your notes plus the transcript into clean AI notes.
+**A self-hosted meeting notebook.** Take notes during a meeting, record from your laptop or phone, get a private transcript made on your own GPU, and turn your notes plus the transcript into clean AI notes. Every claim links back to what was said.
 
-- **Notes first** — Markdown notes with live preview, checklists, note templates, Tab/Shift+Tab indentation and a distraction-free focus mode with side-by-side preview.
-- **Record from any device** — start/stop from one device, record on another (e.g. a phone), switch microphones mid-recording, optional backup devices, resumable uploads.
-- **Local transcription** — [faster-whisper](https://github.com/SYSTRAN/faster-whisper) on an NVIDIA GPU (CPU works too), English, Chinese or mixed-language meetings, optional Traditional Chinese conversion.
-- **AI notes** — generated from your notes and the transcript by the provider you choose (ChatGPT plan sign-in, OpenAI, Anthropic, Google Gemini, OpenRouter, OpenCode Zen, NVIDIA NIM or any OpenAI-compatible/local server). Sources are hidden in the text and shown on hover; every version is kept.
-- **Search & actions** — Ctrl/⌘+K from anywhere: jump to a meeting, folder or Settings page by name, or run an action (new meeting, import a recording, archive or move the open meeting…). Start with `>` for actions only. Ctrl/⌘+F finds within the open meeting tab.
-- **Dashboard** — this week at a glance, recent meetings and every open to-do.
-
-It is designed for **one owner** on a home server, reachable from your other devices over HTTPS (for example via Tailscale). It is not a multi-user hosted service.
-
-## Requirements
-
-- Docker Engine with Compose v2
-- For GPU transcription: an NVIDIA GPU, driver, and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/) (or the host override described below)
-- About 2–4 GB of disk for a speech model, downloaded on first use and cached
-
-No API key is needed to start the app.
+![Huh home: this week at a glance, folders, recent meetings and open to-dos](docs/images/dashboard.png)
 
 ## Quick start
 
 ```bash
-cp .env.example .env      # optional — defaults work for local use
+git clone https://github.com/chenkuanliao/Huh.git && cd Huh
+./scripts/up.sh
+```
+
+Open **http://localhost:8787** and create your password. In **Settings**, pick an AI provider and a speech model. That's it.
+
+You need Docker with Compose v2. An NVIDIA GPU makes transcription fast, but it's optional. See [Requirements](#requirements) and [Setup details](#setup-details).
+
+## Features
+
+### Notes first
+
+Write Markdown that formats as you type: headings, bold, lists and checkboxes look finished while the raw syntax shows only on the line you're editing. There are also note templates, Tab/Shift+Tab indentation and a distraction-free focus mode.
+
+![Typing a heading, a bullet and a checklist item in the live editor, then ticking it](docs/images/notes.gif)
+
+### Record from any device
+
+Start and stop from one device and record on another, for example your phone in the middle of the table. You can switch microphones mid-recording, add backup devices, and uploads resume if the network drops. You can also import a recording or a Voice Memo afterwards.
+
+![A meeting while recording, with the recorder bar at the bottom](docs/images/recording.png)
+
+### Private, local transcription
+
+Speech runs through [faster-whisper](https://github.com/SYSTRAN/faster-whisper) on your own machine (NVIDIA GPU, or CPU). It handles English, Chinese and meetings that mix both, with optional Traditional Chinese conversion. Audio never leaves your server.
+
+![A transcript that switches between English and Chinese](docs/images/transcript.png)
+
+### AI notes with sources
+
+AI notes are written from your notes and the transcript. Sources are hidden in the text: right-click (or tap) any line to see exactly which moments of the meeting it came from, and click one to jump there. Every version is kept in History.
+
+![An AI-notes decision with its three sources expanded: two transcript quotes and the written notes](docs/images/sources.png)
+
+Bring whichever model you like: sign in with a ChatGPT plan, or use OpenAI, Anthropic, Google Gemini, OpenRouter, OpenCode Zen, NVIDIA NIM or any OpenAI-compatible/local server (Ollama, LM Studio, vLLM…). Put several in order, and if one runs out or fails, the next one takes over.
+
+<p align="center"><img src="docs/images/providers.png" alt="The AI provider picker in Settings" width="640"></p>
+
+### Search and actions from the keyboard
+
+Press **Ctrl/⌘+K** anywhere to jump to a meeting, folder or Settings page, or run an action (new meeting, import a recording, archive or move the open meeting…). Start with `>` for actions only. **Ctrl/⌘+F** finds text inside the open meeting.
+
+![Searching for a meeting with Ctrl+K, then listing actions with >](docs/images/palette.gif)
+
+### A real phone layout
+
+On a phone, Huh becomes a simple list of meetings, your to-dos, a **Record** button on every meeting, and a clean reading view for each meeting.
+
+<p align="center"><img src="docs/images/phone.png" alt="Huh on a phone: the meeting list and a meeting's AI notes" width="560"></p>
+
+### And also
+
+- **Dashboard:** this week at a glance, recent meetings and every open to-do across meetings.
+- **Folders and archive** to keep things tidy.
+- **Glossary** per meeting, so the AI spells names and jargon right.
+
+Huh is built for **one owner** on a home server, reached from your other devices over HTTPS (for example with Tailscale). It is not a multi-user hosted service.
+
+## Requirements
+
+- Docker Engine with Compose v2
+- For GPU transcription: an NVIDIA GPU, its driver, and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/) (or the [host override](#gpu-without-the-nvidia-container-toolkit-linux) below)
+- About 2–4 GB of disk for a speech model, downloaded on first use and cached
+
+No API key is needed to start the app.
+
+## Setup details
+
+```bash
+cp .env.example .env      # optional, defaults work for local use
 ./scripts/up.sh           # builds and starts db, app and worker
 ```
 
-Open **http://localhost:8787**, create the owner password, then open **Settings** to:
+Open **http://localhost:8787**, create the owner password, then in **Settings**:
 
-1. **AI notes** — pick a provider and sign in or paste an API key; models load automatically.
-2. **Transcription** — pick a speech model (Large v3 Turbo is a good default) and the spoken language.
+1. **AI notes:** pick a provider and sign in or paste an API key. Models load automatically.
+2. **Transcription:** pick a speech model (Large v3 Turbo is a good default) and the spoken language.
 
-### GPU without NVIDIA Container Toolkit (Linux)
+### GPU without the NVIDIA Container Toolkit (Linux)
 
-If the toolkit isn't installed, you can generate a local override that passes the GPU device nodes and mounts the host driver libraries read-only. It doesn't change the host or the Docker daemon:
+If the toolkit isn't installed, generate a local override that passes the GPU device nodes through and mounts the host driver libraries read-only. It doesn't change the host or the Docker daemon:
 
 ```bash
 python3 scripts/configure-host-gpu.py   # writes compose.host-gpu.yaml (gitignored, host-specific)
@@ -50,7 +104,7 @@ docker compose -f compose.yaml -f compose.cpu.yaml up -d --build
 
 Then choose **CPU** under Settings → Transcription → Advanced. Long recordings are much faster on a GPU.
 
-## Using it from other devices
+### Using it from other devices
 
 Browsers only allow microphone access over HTTPS (or on `localhost`). The simplest way is [Tailscale Serve](https://tailscale.com/kb/1312/serve) on the host:
 
@@ -58,7 +112,7 @@ Browsers only allow microphone access over HTTPS (or on `localhost`). The simple
 tailscale serve --bg --https=8787 http://127.0.0.1:8787
 ```
 
-Then set the HTTPS address Tailscale prints in `.env` and restart:
+Then put the HTTPS address Tailscale prints in `.env` and restart:
 
 ```ini
 ALLOWED_ORIGINS=https://<your-machine>.<your-tailnet>.ts.net:8787
@@ -113,6 +167,7 @@ If you use the GPU override, pass `-f compose.yaml -f compose.host-gpu.yaml` to 
 | `frontend/src` | React + TypeScript + Vite UI |
 | `qa/` | Browser tests (Playwright) and a test-only mock LLM |
 | `scripts/` | Start-up, GPU override and smoke-test helpers |
+| `docs/images/` | Screenshots and GIFs used in this README |
 | `SPEC.md` | API and behaviour contract |
 
 ```bash
@@ -140,7 +195,7 @@ Test audio lives in the gitignored `.artifacts/` folder: `jfk.flac` is the publi
 
 ### Contributing
 
-Work happens on branches and pull requests against `main`. Keep secrets, personal data and machine-specific files out of commits — `.gitignore` already excludes `.env`, `.artifacts/`, `compose.host-gpu.yaml` and local notes.
+Work happens on branches and pull requests against `main`. Keep secrets, personal data and machine-specific files out of commits. `.gitignore` already excludes `.env`, `.artifacts/`, `compose.host-gpu.yaml` and local notes.
 
 ## License
 
