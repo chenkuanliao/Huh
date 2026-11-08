@@ -6,7 +6,7 @@ import { defaultTitle } from './format';
 import { Archive, BookA, Pause, Play, Square, Columns2, ListTodo, Maximize2, NotebookPen, PanelRightClose, Rows3, AudioLines, ChevronDown, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, LocateFixed, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 import { api, Detail, errorText, Folder, Generation, Job, Meeting, peek, send, Template } from './api';
 import { FolderGlyph, folderVars } from './folders';
-import Editor from './Editor';
+import Editor, { type NoteView } from './Editor';
 import { noteLanguageLabel, OUTPUT_LANGUAGES } from './providers';
 import { DeviceIcon } from './Recorder';
 import { Badge, Callout, ConfirmDialog, cx, Menu, MenuItem, Modal, Select, Spinner, useToast } from './ui';
@@ -155,7 +155,7 @@ export default function MeetingView({
   /** Glossary terms the AI will know for this meeting (all notes + folder + meeting). */
   glossaryCount?: number;
   onGlossary?: () => void;
-  views: { notes: 'write' | 'preview'; ai: 'write' | 'preview' };
+  views: { notes: NoteView; ai: NoteView };
   /** Open a tab, optionally searching and/or moving the transcript playhead (from the palette or a to-do link). */
   request?: MeetingRequest | null;
 }) {

@@ -48,7 +48,19 @@ export function usePhoneLayout(): { phone: boolean; small: boolean; pref: Layout
       const a = document.activeElement;
       return a instanceof HTMLTextAreaElement || (a instanceof HTMLInputElement && !['checkbox', 'radio', 'button'].includes(a.type)) || (a instanceof HTMLElement && a.isContentEditable);
     };
+    // iOS can put the keyboard away (its ✓ key, a hide gesture) without the field losing focus, and a tap on the
+    // still-focused field then never brings the keyboard back. So the field lets go of focus; a note stays in
+    // editing (raw text, Done in the top bar) until Done, and a tap on it raises the keyboard again.
+    const keyboardUp = () => window.innerHeight - vv.height * vv.scale > 120;
+    let wasUp = keyboardUp();
     const set = () => {
+      const up = keyboardUp();
+      if (wasUp && !up && typingField()) {
+        const a = document.activeElement as HTMLElement;
+        if (a.isContentEditable) window.getSelection()?.removeAllRanges();
+        a.blur();
+      }
+      wasUp = up;
       if (typingField()) {
         root.style.setProperty('--vvh', `${vv.height}px`);
         root.style.setProperty('--vvtop', `${vv.offsetTop}px`);
@@ -198,8 +210,8 @@ export function PhoneTopBar({
           <Pencil size={20} />
         </button>
       )}
-      {/* While typing, Done puts the keyboard away; the other actions come back after. */}
-      <button type="button" className="phone-done" onPointerDown={e => e.preventDefault()} onClick={() => (document.activeElement as HTMLElement | null)?.blur()}>
+      {/* While editing a note, Done goes back to reading it; the other actions come back after. */}
+      <button type="button" className="phone-done" onPointerDown={e => e.preventDefault()} onClick={() => window.dispatchEvent(new Event('huh:phone-done'))}>
         Done
       </button>
       {onMenu ? (
@@ -615,35 +627,6 @@ export function PhoneSettingsFooter({ onDesktop, onLock }: { onDesktop: () => vo
       </div>
     </section>
   );
-}
-
-const isNoteEditor = (t: EventTarget | null) => t instanceof HTMLTextAreaElement && t.classList.contains('note-editor');
-
-/** Adds body.phone-typing while a note's text box has focus, so everything but the note can step aside.
- *  Browsers send no blur when a focused box is removed (leaving the meeting mid-typing), so the class is
- *  also re-checked whenever the page changes (`routeKey`) — otherwise the recorder bar and top-bar
- *  buttons would stay hidden everywhere. */
-export function usePhoneTyping(active: boolean, routeKey: string) {
-  useEffect(() => {
-    if (!active) return;
-    const on = (e: FocusEvent) => isNoteEditor(e.target) && document.body.classList.add('phone-typing');
-    const off = (e: FocusEvent) => isNoteEditor(e.target) && !isNoteEditor(e.relatedTarget) && document.body.classList.remove('phone-typing');
-    document.addEventListener('focusin', on);
-    document.addEventListener('focusout', off);
-    return () => {
-      document.removeEventListener('focusin', on);
-      document.removeEventListener('focusout', off);
-      document.body.classList.remove('phone-typing');
-    };
-  }, [active]);
-  useEffect(() => {
-    if (!active) return;
-    const sync = () => document.body.classList.toggle('phone-typing', isNoteEditor(document.activeElement) && document.activeElement!.isConnected);
-    sync();
-    // The old page's text box may unmount a frame later (route transitions); check once more.
-    const raf = requestAnimationFrame(sync);
-    return () => cancelAnimationFrame(raf);
-  }, [active, routeKey]);
 }
 
 export type SaveState = { status: string; tone: 'good' | 'pending' | 'bad' };

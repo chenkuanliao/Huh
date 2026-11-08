@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react';
 import { cx } from './ui';
+import { EditorView, liveViewIn, setFindHits } from './live';
 
 type Hit = { range?: Range; start?: number; end?: number };
 const MAX_HITS = 5000;
@@ -90,6 +91,8 @@ export default function FindBar({
   const [index, setIndex] = useState(0);
   const hits = useRef<Hit[]>([]);
   const area = useRef<HTMLTextAreaElement | null>(null);
+  /** The live editor being searched, if the tab shows one. */
+  const live = useRef<EditorView | null>(null);
   const indexRef = useRef(0);
   indexRef.current = index;
   const anchor = useRef<string | null>(null);
@@ -100,10 +103,28 @@ export default function FindBar({
       (CSS as any).highlights.delete('huh-find-current');
     }
     removeMirror(area.current);
+    if (live.current && !live.current.dom.isConnected) live.current = null;
+    live.current?.dispatch({ effects: setFindHits.of({ hits: [], current: 0 }) });
   }, []);
 
   const paint = useCallback((current: number, scroll: boolean) => {
     const list = hits.current;
+    if (live.current) {
+      const view = live.current;
+      const h = list[current];
+      view.dispatch({
+        effects: [
+          setFindHits.of({ hits: list.map(x => [x.start!, x.end!]), current }),
+          ...(scroll && h ? [EditorView.scrollIntoView(h.start!, { y: 'center' })] : []),
+        ],
+      });
+      if (scroll && h) {
+        const box = view.dom.getBoundingClientRect();
+        if (box.bottom < 0 || box.top > innerHeight) view.dom.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        requestAnimationFrame(() => view.dom.querySelector('.find-hit.current')?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+      }
+      return;
+    }
     if (area.current) {
       const ta = area.current;
       const mirror = buildMirror(ta, list, current);
@@ -133,13 +154,16 @@ export default function FindBar({
     (keepIndex: boolean, scroll: boolean) => {
       const q = query.trim().toLowerCase();
       const target = findTarget(root.current);
-      const ta = target ? visibleTextarea(target) : null;
+      const cm = target ? liveViewIn(target) : null;
+      const ta = target && !cm ? visibleTextarea(target) : null;
       if (area.current && area.current !== ta) removeMirror(area.current);
       area.current = ta;
+      if (live.current && live.current !== cm && live.current.dom.isConnected) live.current.dispatch({ effects: setFindHits.of({ hits: [], current: 0 }) });
+      live.current = cm;
       const found: Hit[] = [];
       if (q && target) {
-        if (ta) {
-          const text = ta.value.toLowerCase();
+        if (cm || ta) {
+          const text = (cm ? cm.state.doc.toString() : ta!.value).toLowerCase();
           for (let i = text.indexOf(q); i !== -1 && found.length < MAX_HITS; i = text.indexOf(q, i + q.length)) found.push({ start: i, end: i + q.length });
         } else {
           const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT, {
@@ -158,7 +182,7 @@ export default function FindBar({
       }
       hits.current = found;
       let next = keepIndex ? Math.min(indexRef.current, Math.max(0, found.length - 1)) : 0;
-      if (!keepIndex && anchor.current && !ta) {
+      if (!keepIndex && anchor.current && !ta && !cm) {
         const el = document.querySelector(anchor.current);
         const i = el ? found.findIndex(h => el.contains(h.range!.startContainer)) : -1;
         if (i >= 0) next = i;
@@ -205,7 +229,11 @@ export default function FindBar({
       window.clearTimeout(t);
       t = window.setTimeout(() => compute(true, false), 150);
     };
-    const observer = new MutationObserver(refresh);
+    // The live editor redraws itself (including for our own highlights), so its DOM changes don't count;
+    // it reports its text changes with huh:cm-change instead.
+    const observer = new MutationObserver(records => {
+      if (records.some(r => !(r.target instanceof Element ? r.target : r.target.parentElement)?.closest('.cm-editor'))) refresh();
+    });
     observer.observe(target, { childList: true, subtree: true, characterData: true });
     const ta = visibleTextarea(target);
     const sync = () => {
@@ -213,11 +241,13 @@ export default function FindBar({
       if (m && ta) m.scrollTop = ta.scrollTop;
     };
     ta?.addEventListener('input', refresh);
+    target.addEventListener('huh:cm-change', refresh);
     ta?.addEventListener('scroll', sync);
     window.addEventListener('resize', refresh);
     return () => {
       observer.disconnect();
       ta?.removeEventListener('input', refresh);
+      target.removeEventListener('huh:cm-change', refresh);
       ta?.removeEventListener('scroll', sync);
       window.removeEventListener('resize', refresh);
       window.clearTimeout(t);

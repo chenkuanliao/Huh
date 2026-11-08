@@ -34,6 +34,77 @@ function lineBounds(value: string, start: number, end: number) {
   return { from, to: nl === -1 ? value.length : nl };
 }
 
+/** A text edit: replace [from, to) with `insert`, then select [anchor, head]. */
+export type TextEdit = { from: number; to: number; insert: string; anchor: number; head: number };
+
+/**
+ * Tab / Shift+Tab on the selection [s, t]. List lines and multi-line selections indent whole lines;
+ * otherwise Tab inserts a tab. Returns null when nothing changes.
+ */
+export function indentEdit(value: string, s: number, t: number, outdent: boolean): TextEdit | null {
+  const { from, to } = lineBounds(value, s, t);
+  const block = value.slice(from, to);
+  const multi = block.includes('\n');
+  if (!outdent && !multi && !LIST_LINE.test(block)) return { from: s, to: t, insert: '\t', anchor: s + 1, head: s + 1 };
+  const lines = block.split('\n');
+  const changed = lines.map(l => (outdent ? l.replace(/^(\t| {1,4})/, '') : l.length ? INDENT + l : l));
+  const next = changed.join('\n');
+  if (next === block) return null;
+  if (multi || t > s) return { from, to, insert: next, anchor: from, head: from + next.length };
+  const caret = Math.max(from, s + changed[0].length - lines[0].length);
+  return { from, to, insert: next, anchor: caret, head: caret };
+}
+
+/** Enter at `s` inside a list item: continue the list, or end it on an empty item. Null when Enter should act normally. */
+export function listEnterEdit(value: string, s: number): TextEdit | null {
+  const from = value.lastIndexOf('\n', s - 1) + 1;
+  const nl = value.indexOf('\n', s);
+  const line = value.slice(from, nl === -1 ? value.length : nl);
+  const m = line.match(ITEM);
+  if (!m || s < from + m[0].length) return null;
+  const [marker, indent, bullet, num, punct, space, task] = m;
+  if (!line.slice(marker.length).trim()) {
+    // Empty item: end the list (or step out one level if nested).
+    const insert = indent.length ? indent.slice(Math.min(indent.length, INDENT.length)) + marker.trimStart() : '';
+    return { from, to: from + marker.length, insert, anchor: from + insert.length, head: from + insert.length };
+  }
+  const insert = '\n' + `${indent}${bullet ?? `${Number(num) + 1}${punct}`}${space}${task ? '[ ] ' : ''}`;
+  return { from: s, to: s, insert, anchor: s + insert.length, head: s + insert.length };
+}
+
+/**
+ * Indent (or outdent) one list line (0-based), as Tab / Shift+Tab would; for the phone's swipe on a line.
+ * Null when the line isn't a bullet, numbered or checkbox item, or can't move further.
+ */
+export function shiftListEdit(value: string, lineIndex: number, outdent: boolean): TextEdit | null {
+  let from = 0;
+  for (let i = 0; i < lineIndex; i++) {
+    const nl = value.indexOf('\n', from);
+    if (nl === -1) return null;
+    from = nl + 1;
+  }
+  const nl = value.indexOf('\n', from);
+  const to = nl === -1 ? value.length : nl;
+  const line = value.slice(from, to);
+  if (!LIST_LINE.test(line)) return null;
+  if (!outdent) {
+    // Nest only under a list item on the line above (indenting a first item would make it a code block).
+    // The nearest line above that has something on it (blank lines between items don't count).
+    const above = value.slice(0, Math.max(0, from - 1)).split('\n').reverse();
+    const prev = from > 0 ? above.find(l => l.trim()) ?? '' : '';
+    const width = (l: string) => (l.match(/^\s*/)?.[0] ?? '').replace(/\t/g, INDENT).length;
+    if (!LIST_LINE.test(prev) || width(line) > width(prev)) return null;
+  }
+  const next = outdent ? line.replace(/^(\t| {1,4})/, '') : INDENT + line;
+  if (next === line) return null;
+  return { from, to, insert: next, anchor: from + next.length, head: from + next.length };
+}
+
+function apply(el: HTMLTextAreaElement, edit: TextEdit) {
+  replace(el, edit.from, edit.to, edit.insert);
+  el.setSelectionRange(Math.min(edit.anchor, edit.head), Math.max(edit.anchor, edit.head));
+}
+
 export function handleEditorKeys(e: React.KeyboardEvent<HTMLTextAreaElement>): boolean {
   // Never interfere with an IME composition (Chinese/Japanese input).
   if (e.nativeEvent.isComposing || e.keyCode === 229) return false;
@@ -47,76 +118,26 @@ export function handleEditorKeys(e: React.KeyboardEvent<HTMLTextAreaElement>): b
 
   if (e.key === 'Tab' && !e.altKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
-    const { from, to } = lineBounds(value, s, t);
-    const block = value.slice(from, to);
-    const multi = block.includes('\n');
-    if (!e.shiftKey && !multi && !LIST_LINE.test(block)) {
-      replace(el, s, t, '\t');
-      return true;
-    }
-    const lines = block.split('\n');
-    const changed = lines.map(l => (e.shiftKey ? l.replace(/^(\t| {1,4})/, '') : l.length ? INDENT + l : l));
-    const next = changed.join('\n');
-    if (next === block) return true;
-    const delta = changed[0].length - lines[0].length;
-    replace(el, from, to, next);
-    if (multi || t > s) el.setSelectionRange(from, from + next.length);
-    else {
-      const caret = Math.max(from, s + delta);
-      el.setSelectionRange(caret, caret);
-    }
+    const edit = indentEdit(value, s, t, e.shiftKey);
+    if (edit) apply(el, edit);
     return true;
   }
 
   if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && s === t) {
-    const from = value.lastIndexOf('\n', s - 1) + 1;
-    const nl = value.indexOf('\n', s);
-    const line = value.slice(from, nl === -1 ? value.length : nl);
-    const m = line.match(ITEM);
-    if (!m || s < from + m[0].length) return false;
+    const edit = listEnterEdit(value, s);
+    if (!edit) return false;
     e.preventDefault();
-    const [marker, indent, bullet, num, punct, space, task] = m;
-    if (!line.slice(marker.length).trim()) {
-      // Empty item: end the list (or step out one level if nested).
-      if (indent.length) replace(el, from, from + marker.length, indent.slice(Math.min(indent.length, INDENT.length)) + marker.trimStart());
-      else replace(el, from, from + marker.length, '');
-      return true;
-    }
-    const nextMarker = `${indent}${bullet ?? `${Number(num) + 1}${punct}`}${space}${task ? '[ ] ' : ''}`;
-    replace(el, s, s, '\n' + nextMarker);
+    apply(el, edit);
     return true;
   }
   return false;
 }
 
-/**
- * Indent (or outdent) one list line, as Tab / Shift+Tab would; for the phone's swipe on a line.
- * Returns false when the line isn't a bullet, numbered or checkbox item, or can't move further.
- */
+/** Textarea version of shiftListEdit. */
 export function shiftListLine(el: HTMLTextAreaElement, lineIndex: number, outdent: boolean): boolean {
-  const { value } = el;
-  let from = 0;
-  for (let i = 0; i < lineIndex; i++) {
-    const nl = value.indexOf('\n', from);
-    if (nl === -1) return false;
-    from = nl + 1;
-  }
-  const nl = value.indexOf('\n', from);
-  const to = nl === -1 ? value.length : nl;
-  const line = value.slice(from, to);
-  if (!LIST_LINE.test(line)) return false;
-  if (!outdent) {
-    // Nest only under a list item on the line above (indenting a first item would make it a code block).
-    // The nearest line above that has something on it (blank lines between items don't count).
-    const above = value.slice(0, Math.max(0, from - 1)).split('\n').reverse();
-    const prev = from > 0 ? above.find(l => l.trim()) ?? '' : '';
-    const width = (l: string) => (l.match(/^\s*/)?.[0] ?? '').replace(/\t/g, INDENT).length;
-    if (!LIST_LINE.test(prev) || width(line) > width(prev)) return false;
-  }
-  const next = outdent ? line.replace(/^(\t| {1,4})/, '') : INDENT + line;
-  if (next === line) return false;
-  replace(el, from, to, next);
-  el.setSelectionRange(from + next.length, from + next.length);
+  const edit = shiftListEdit(el.value, lineIndex, outdent);
+  if (!edit) return false;
+  apply(el, edit);
   return true;
 }
 

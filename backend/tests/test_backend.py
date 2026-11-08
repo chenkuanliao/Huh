@@ -838,7 +838,9 @@ def test_provider_errors_include_reason_without_secrets():
 
 def test_editor_default_views(client):
     s = client.get("/api/settings").json()
-    assert s["notes_view"] == "write" and s["ai_notes_view"] == "preview"
+    assert s["notes_view"] == "live" and s["ai_notes_view"] == "preview"
+    assert client.put("/api/settings", json={"notes_view": "write"}).json()["notes_view"] == "write"
+    assert client.put("/api/settings", json={"ai_notes_view": "live"}).json()["ai_notes_view"] == "live"
     assert client.put("/api/settings", json={"ai_notes_view": "write"}).json()["ai_notes_view"] == "write"
     assert client.put("/api/settings", json={"notes_view": "edit"}).status_code == 422
 

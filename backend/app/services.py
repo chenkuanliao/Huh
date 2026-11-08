@@ -21,7 +21,7 @@ DEFAULTS = dict(
     # After a recording finishes: transcribe and write AI notes right away (True), or wait for the owner (False).
     auto_process=True,
     provider_models={},
-    notes_view="write",
+    notes_view="live",
     ai_notes_view="preview",
     # What Back does: "up" goes to the parent page (meeting → its folder → Home); "history" retraces visited pages.
     back_behavior="up",

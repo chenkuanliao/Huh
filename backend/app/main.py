@@ -1169,7 +1169,8 @@ def write_settings(body: dict):
             "auto",
         ]:
             fail("Invalid compute type", 422)
-        if v["notes_view"] not in ["write", "preview"] or v["ai_notes_view"] not in [
+        if v["notes_view"] not in ["live", "write", "preview"] or v["ai_notes_view"] not in [
+            "live",
             "write",
             "preview",
         ]:

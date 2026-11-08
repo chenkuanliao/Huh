@@ -215,6 +215,42 @@ function withSources(tag: string) {
 }
 
 const P = withSources('p');
+
+/** Puts text on the clipboard; false when the browser refuses. */
+export async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A code block, with a button that copies its code. */
+function Pre({ children, ...props }: React.HTMLAttributes<HTMLPreElement>) {
+  const ref = useRef<HTMLPreElement>(null);
+  const [state, setState] = useState<'idle' | 'ok' | 'bad'>('idle');
+  useEffect(() => {
+    if (state === 'idle') return;
+    const t = setTimeout(() => setState('idle'), 1500);
+    return () => clearTimeout(t);
+  }, [state]);
+  return (
+    <div className="code-wrap">
+      <pre ref={ref} {...props}>
+        {children}
+      </pre>
+      <button
+        type="button"
+        className="code-copy"
+        aria-label="Copy code"
+        onClick={() => void copyText((ref.current?.innerText ?? '').replace(/\n$/, '')).then(ok => setState(ok ? 'ok' : 'bad'))}
+      >
+        {state === 'ok' ? 'Copied' : state === 'bad' ? 'Copy failed' : 'Copy'}
+      </button>
+    </div>
+  );
+}
 const TD = withSources('td');
 const H2 = withSources('h2');
 const H3 = withSources('h3');
@@ -241,6 +277,7 @@ export default function Markdown({ text, onToggleTask, className, empty, sources
         </LineContext.Provider>
       ),
       p: ({ node, ...props }) => <P node={node as HastNode} {...props} />,
+      pre: ({ node, ...props }) => <Pre {...props} />,
       td: ({ node, ...props }) => <TD node={node as HastNode} {...props} />,
       h2: ({ node, ...props }) => <H2 node={node as HastNode} {...props} />,
       h3: ({ node, ...props }) => <H3 node={node as HastNode} {...props} />,

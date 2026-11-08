@@ -4,6 +4,14 @@ import { RefObject, useEffect, useRef } from 'react';
 
 export const isPhoneLayout = () => document.body.classList.contains('phone');
 
+const editing = new Set<string>();
+/** Phone: a note is being edited (from its pencil until Done), so body.phone-typing lets the rest step aside. */
+export function setPhoneEditing(key: string, on: boolean) {
+  if (on) editing.add(key);
+  else editing.delete(key);
+  document.body.classList.toggle('phone-typing', editing.size > 0);
+}
+
 let openSheets = 0;
 
 /** The element under the finger that can scroll vertically, up to and including the sheet. */
