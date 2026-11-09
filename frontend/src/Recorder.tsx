@@ -146,6 +146,8 @@ export default function Recorder({
   const [ready, setReady] = useState(false);
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
   const [mic, setMic] = useState(() => localStorage.getItem('huh-mic') || '');
+  const [micLabel, setMicLabel] = useState(() => localStorage.getItem('huh-mic-label') || '');
+  const [scanning, setScanning] = useState(false);
   const [activeMicLabel, setActiveMicLabel] = useState('');
   const [devices, setDevices] = useState<Device[]>([]);
   const [source, setSource] = useState('');
@@ -168,6 +170,7 @@ export default function Recorder({
   const capture = useRef<Capture | null>(null);
   const wake = useRef<any>(null);
   const readyRef = useRef(false);
+  const activeMicRef = useRef('');
   const graph = useRef<{ ctx: AudioContext; dest: MediaStreamAudioDestinationNode; analyser: AnalyserNode; source: MediaStreamAudioSourceNode | null } | null>(null);
   const analyser = useRef<AnalyserNode | null>(null);
   const sourceChip = useRef<HTMLButtonElement>(null);
@@ -188,10 +191,44 @@ export default function Recorder({
   }
 
   const listMics = useCallback(async () => {
-    if (!navigator.mediaDevices?.enumerateDevices) return;
+    if (!navigator.mediaDevices?.enumerateDevices) return [];
     const all = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput');
     setMics(all);
+    return all;
   }, []);
+
+  /** Re-reads the inputs and, if the saved mic (e.g. a Continuity iPhone) is back, moves to it. */
+  const devicesRef = useRef<() => Promise<'switched' | 'missing' | 'ok'>>(async () => 'ok');
+  devicesRef.current = async () => {
+    const all = await listMics();
+    const saved = latest.current.mic;
+    if (!saved) return 'ok';
+    const hit = all.find(m => m.deviceId === saved);
+    if (!hit) return 'missing';
+    const c = capture.current;
+    if (readyRef.current && activeMicRef.current !== saved && (!c || c.viaGraph) && (await prepare(saved, true))) {
+      toast(`Switched to ${cleanLabel(hit.label) || 'your microphone'}.`, 'success');
+      return 'switched';
+    }
+    return 'ok';
+  };
+
+  /** "Rescan" only re-reads what the OS reports; it cannot make macOS look for an iPhone. */
+  async function rescan() {
+    setScanning(true);
+    try {
+      // Without permission the browser hides mic names (and Continuity iPhones), so ask first.
+      if (permission !== 'granted' && !(await prepare())) return;
+      const [result] = await Promise.all([devicesRef.current(), new Promise(r => setTimeout(r, 400))]);
+      const label = latest.current.mic ? localStorage.getItem('huh-mic-label') || 'your saved microphone' : '';
+      if (result === 'missing') toast(`${label} isn’t connected yet. Wake or unlock it nearby — it switches over as soon as your computer sees it.`);
+      else if (result === 'ok') toast('Microphone list is up to date.');
+    } catch (e) {
+      toast(errorText(e), 'error');
+    } finally {
+      setScanning(false);
+    }
+  }
 
   // Populate the microphone list early when permission was granted before.
   useEffect(() => {
@@ -204,7 +241,7 @@ export default function Recorder({
         if (status.state === 'granted') await listMics();
       } catch {}
     })();
-    const onDevices = () => void listMics();
+    const onDevices = () => void devicesRef.current().catch(() => {});
     navigator.mediaDevices?.addEventListener?.('devicechange', onDevices);
     return () => {
       navigator.mediaDevices?.removeEventListener?.('devicechange', onDevices);
@@ -240,19 +277,21 @@ export default function Recorder({
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw Error('Microphone access needs HTTPS and a supported browser.');
       let s: MediaStream;
+      let fellBack = false;
       try {
         s = await navigator.mediaDevices.getUserMedia({ audio: id ? { deviceId: { exact: id } } : true });
       } catch (e: any) {
         if (id && (e?.name === 'OverconstrainedError' || e?.name === 'NotFoundError')) {
+          // Keep the saved choice: a Continuity iPhone often connects a few seconds later.
           s = await navigator.mediaDevices.getUserMedia({ audio: true });
-          setMic('');
-          localStorage.removeItem('huh-mic');
+          fellBack = true;
         } else throw e;
       }
       const old = stream.current;
       stream.current = s;
       const track = s.getAudioTracks()[0];
       setActiveMicLabel(cleanLabel(track?.label || ''));
+      activeMicRef.current = id && !fellBack ? id : track?.getSettings().deviceId || '';
       if (g) {
         if (g.ctx.state !== 'running') await g.ctx.resume().catch(() => {});
         const node = g.ctx.createMediaStreamSource(s);
@@ -289,8 +328,7 @@ export default function Recorder({
     if (c?.viaGraph && c.rec.state !== 'inactive') {
       const ok = await prepare('', true);
       if (ok) {
-        setMic('');
-        toast(`${label} disconnected — recording continues on the default microphone.`, 'error');
+        toast(`${label} disconnected — recording continues on the default microphone. It switches back when ${label} reconnects.`, 'error');
         return;
       }
     }
@@ -303,6 +341,7 @@ export default function Recorder({
     if (capture.current) return;
     stream.current?.getTracks().forEach(t => t.stop());
     stream.current = null;
+    activeMicRef.current = '';
     graph.current?.source?.disconnect();
     if (graph.current) graph.current.source = null;
     setReadyBoth(false);
@@ -310,8 +349,16 @@ export default function Recorder({
 
   async function chooseMic(id: string) {
     setMic(id);
-    if (id) localStorage.setItem('huh-mic', id);
-    else localStorage.removeItem('huh-mic');
+    latest.current.mic = id;
+    const label = id ? cleanLabel(mics.find(m => m.deviceId === id)?.label || '') || (id === mic ? micLabel : '') : '';
+    setMicLabel(label);
+    if (id) {
+      localStorage.setItem('huh-mic', id);
+      localStorage.setItem('huh-mic-label', label);
+    } else {
+      localStorage.removeItem('huh-mic');
+      localStorage.removeItem('huh-mic-label');
+    }
     if (readyRef.current || capture.current) {
       const ok = await prepare(id);
       if (ok && capture.current) toast('Switched microphone — recording continues.', 'success');
@@ -671,17 +718,20 @@ export default function Recorder({
     return () => document.body.classList.remove('rec-active');
   }, [recActive]);
 
+  // The saved mic is not connected right now (e.g. macOS has not attached the iPhone yet).
+  const micMissing = !!mic && permission === 'granted' && mics.length > 0 && !mics.some(m => m.deviceId === mic);
   const micOptions = useMemo(() => {
     const real = mics.filter(m => m.deviceId && m.deviceId !== 'default' && m.deviceId !== 'communications');
     const def = mics.find(m => m.deviceId === 'default');
     return [
       { value: '', label: 'System default', description: def?.label ? cleanLabel(def.label) : 'Whatever your computer is set to use', icon: <Mic size={16} /> },
       ...real.map(m => ({ value: m.deviceId, label: cleanLabel(m.label) || 'Microphone', icon: <MicIcon label={m.label} /> })),
+      ...(micMissing ? [{ value: mic, label: micLabel || 'Saved microphone', description: 'Not connected — switches over when it appears', icon: <MicIcon label={micLabel} /> }] : []),
     ];
-  }, [mics]);
+  }, [mics, micMissing, mic, micLabel]);
   // The live capture's own buffer is not "pending" from the user's point of view.
   const waiting = pending.filter(p => p.id !== capture.current?.p.id);
-  const micName = mic ? micOptions.find(o => o.value === mic)?.label || activeMicLabel || 'Microphone' : activeMicLabel || 'Default microphone';
+  const micName = mic && !micMissing ? micOptions.find(o => o.value === mic)?.label || activeMicLabel || 'Microphone' : activeMicLabel || 'Default microphone';
 
   if ((!meeting || hideWhenIdle) && !capturing && !waiting.length && !(hideWhenIdle && meeting && (isLive || isStarting || status === 'paused'))) {
     return <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} meeting={meeting} onDone={() => onChange()} refreshQueue={refreshQueue} />;
@@ -849,6 +899,9 @@ export default function Recorder({
                     emptyText="No microphones found"
                     footer={permission !== 'granted' ? <span className="hint">Turn on the microphone once to see every input, including your iPhone and AirPods.</span> : <span className="hint">Connected iPhones (Continuity), AirPods and USB mics appear here.</span>}
                   />
+                  <button type="button" className="icon-button bordered sm" title="Rescan microphones" aria-label="Rescan microphones" disabled={scanning || preparing} onClick={() => void rescan()}>
+                    <RefreshCw size={15} className={cx(scanning && 'spin')} />
+                  </button>
                   {ready ? (
                     !capture.current && (
                       <button type="button" className="icon-button bordered sm" title="Turn microphone off" aria-label="Turn microphone off" onClick={micOff}>
@@ -861,6 +914,11 @@ export default function Recorder({
                     </button>
                   )}
                 </div>
+                {micMissing && (
+                  <p className="hint">
+                    Waiting for {micLabel || 'your saved microphone'} to connect{ready ? ' — using the default mic until then' : ''}.
+                  </p>
+                )}
                 {capture.current && !capture.current.viaGraph && <p className="hint">This browser can’t switch microphones mid-recording. Stop first to change it.</p>}
                 {capture.current?.viaGraph && <p className="hint">You can switch microphones while recording — it won’t interrupt the audio.</p>}
                 {permission === 'denied' && <Callout tone="bad">Microphone access is blocked for this site. Allow it in your browser’s site settings.</Callout>}
