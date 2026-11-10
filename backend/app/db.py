@@ -229,6 +229,24 @@ def init():
             )
         else:
             c.execute(text("INSERT OR IGNORE INTO kv (key,value) VALUES ('lock','{}')"))
+        _migrate_settings(c)
+
+
+def _migrate_settings(c):
+    """One-time fixes to saved settings, each recorded in kv 'migrations' so it never repeats."""
+    kv = KV.__table__
+    done = c.execute(select(kv.c.value).where(kv.c.key == "migrations")).scalar() or {}
+    if done.get("notes_view_live"):
+        return
+    # Settings saved before Live existed stored the old default "write" for My notes; open them in Live.
+    saved = c.execute(select(kv.c.value).where(kv.c.key == "settings")).scalar()
+    if saved and saved.get("notes_view") == "write":
+        c.execute(kv.update().where(kv.c.key == "settings").values(value={**saved, "notes_view": "live"}))
+    done = {**done, "notes_view_live": True}
+    if c.execute(select(kv.c.key).where(kv.c.key == "migrations")).first():
+        c.execute(kv.update().where(kv.c.key == "migrations").values(value=done))
+    else:
+        c.execute(kv.insert().values(key="migrations", value=done))
 
 
 @contextmanager
