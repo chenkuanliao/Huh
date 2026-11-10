@@ -845,6 +845,20 @@ def test_editor_default_views(client):
     assert client.put("/api/settings", json={"notes_view": "edit"}).status_code == 422
 
 
+def test_old_saved_source_view_migrates_to_live_once(client):
+    from app import db
+
+    with db.tx() as s:
+        db.putkv(s, "settings", {**db.getkv(s, "settings"), "notes_view": "write"})
+        db.putkv(s, "migrations", {})
+    db.init()
+    assert client.get("/api/settings").json()["notes_view"] == "live"
+    # A Source choice made after the migration is kept.
+    assert client.put("/api/settings", json={"notes_view": "write"}).json()["notes_view"] == "write"
+    db.init()
+    assert client.get("/api/settings").json()["notes_view"] == "write"
+
+
 def test_back_behavior_setting(client):
     assert client.get("/api/settings").json()["back_behavior"] == "up"
     assert client.put("/api/settings", json={"back_behavior": "history"}).json()["back_behavior"] == "history"
