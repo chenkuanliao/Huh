@@ -10,6 +10,7 @@ import MeetingView, { MeetingRequest as Req, runMeetingCommand } from './Meeting
 import type { NoteView } from './Editor';
 import CommandPalette, { Command, CommandSection } from './CommandPalette';
 import { defaultTitle } from './format';
+import { daysAgo, fmt, meetingDate, setZone, useZone } from './time';
 import { forgetMeeting } from './queue';
 import { NewSheet, PhoneAction, PhoneFolder, PhoneHome, PhoneSearch, PhoneSettingsFooter, PhoneTab, PhoneTabBar, PhoneTodos, PhoneTopBar, usePhoneLayout, usePhoneScrolled, useSaveState } from './Mobile';
 
@@ -89,15 +90,15 @@ const DRAG_TYPE = 'application/x-huh-meeting';
 const UNFILED = '__unfiled';
 const ARCHIVE = '__archive';
 
+/** List section for a meeting's date, counted in the chosen time zone. */
 function groupLabel(date: Date) {
-  const today = new Date();
-  const start = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const days = Math.round((start(today) - start(date)) / 86400000);
-  if (days <= 0) return 'Today';
+  const days = daysAgo(date);
+  if (days < 0) return 'Upcoming';
+  if (days === 0) return 'Today';
   if (days === 1) return 'Yesterday';
   if (days < 7) return 'This week';
   if (days < 31) return 'This month';
-  return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  return fmt(date, { month: 'long', year: 'numeric' });
 }
 
 function Login({ auth, onDone }: { auth: Auth | null; onDone: (a: Auth) => void }) {
@@ -153,6 +154,7 @@ function Login({ auth, onDone }: { auth: Auth | null; onDone: (a: Auth) => void 
 
 function App() {
   const toast = useToast();
+  const zone = useZone(); // every date re-renders when the time zone setting changes
   const [auth, setAuth] = useState<Auth | null>(null);
   const [authError, setAuthError] = useState('');
   const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -220,6 +222,7 @@ function App() {
       setBackMode(s.back_behavior === 'history' ? 'history' : 'up');
       setNoteLanguage(s.output_language || 'auto');
       setGlobalGlossary(s.glossary || []);
+      setZone(s.time_zone);
     },
     [],
   );
@@ -418,13 +421,15 @@ function App() {
     const list = unfiled.filter(m => !q || (m.title + ' ' + m.notes).toLowerCase().includes(q));
     const out: { label: string; items: Meeting[] }[] = [];
     for (const m of list) {
-      const label = groupLabel(new Date(m.created_at || m.updated_at));
+      const label = groupLabel(new Date(meetingDate(m)));
       const g = out.find(x => x.label === label);
       if (g) g.items.push(m);
       else out.push({ label, items: [m] });
     }
-    return out;
-  }, [unfiled, query]);
+    // Sections run from upcoming meetings back to the oldest month.
+    const latest = (g: { items: Meeting[] }) => g.items.reduce((x, m) => (meetingDate(m) > x ? meetingDate(m) : x), '');
+    return out.sort((a, b) => latest(b).localeCompare(latest(a)));
+  }, [unfiled, query, zone]);
 
   if (!auth?.authenticated)
     return authError ? (
@@ -799,7 +804,7 @@ function App() {
         >
           <span className="truncate">{m.title || 'Untitled meeting'}</span>
           <small>
-            {new Date(m.created_at || m.updated_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+            {fmt(meetingDate(m), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
             {m.status === 'recording' && (
               <span className="live-dot" title="Recording">
                 <Mic size={11} />
@@ -839,7 +844,7 @@ function App() {
     if (!paletteOpen) return { commands: [], suggestions: [] };
     const keys = isMac ? { find: '⌘F', focus: '⇧⌘F', sidebar: '⌘B', back: '⌘[' } : { find: 'Ctrl+F', focus: 'Ctrl+Shift+F', sidebar: 'Ctrl+B', back: 'Alt+←' };
     const label = (m: Meeting) => m.title || 'Untitled meeting';
-    const when = (m: Meeting) => new Date(m.created_at || m.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const when = (m: Meeting) => fmt(meetingDate(m), { month: 'short', day: 'numeric' });
     const thisMeeting = page === 'meeting' ? current : undefined;
     const thisFolder = page === 'folder' ? openFolderObj : undefined;
 

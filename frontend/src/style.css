@@ -7603,3 +7603,391 @@ body.phone .job .job-actions .ghost {
     font-size: 16px;
   }
 }
+
+/* ============================================================ meeting time */
+button.when-chip {
+  height: 26px;
+  margin-left: -8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: inherit;
+  font-weight: 450;
+  gap: 6px;
+  min-width: 0;
+}
+button.when-chip > span:first-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+button.when-chip:hover,
+button.when-chip.on {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+button.when-chip.upcoming svg {
+  color: var(--accent);
+}
+.when-zone {
+  color: var(--faint);
+  font-size: 0.92em;
+}
+.when-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+.when-popover {
+  overflow-y: auto;
+  padding: 0 !important;
+}
+.when-picker {
+  display: flex;
+  flex-direction: column;
+}
+.when-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.when-title {
+  font-family: var(--serif);
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+.when-sub {
+  margin-top: 3px;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.when-rel {
+  color: var(--accent);
+  font-weight: 550;
+}
+.when-tz {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: help;
+}
+.when-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+}
+.when-cal {
+  padding: 12px 14px 14px 16px;
+}
+.when-month {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+.when-month strong {
+  min-width: 132px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+.when-month .icon-button {
+  width: 30px;
+  height: 30px;
+}
+.when-today {
+  margin-left: auto;
+}
+.when-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.when-dow {
+  display: grid;
+  place-items: center;
+  height: 24px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 650;
+}
+button.when-day {
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+button.when-day:hover {
+  background: var(--surface-3);
+}
+button.when-day.past {
+  color: var(--ink-2);
+}
+button.when-day.out {
+  color: var(--faint);
+}
+button.when-day.today {
+  color: var(--accent);
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+button.when-day.on,
+button.when-day.on:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 650;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.when-times {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
+}
+.when-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 10px 6px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+}
+.when-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.when-field input {
+  flex: 1;
+  min-width: 0;
+  height: 32px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* Fills the column beside the calendar without making it taller. */
+.when-slots {
+  position: absolute;
+  inset: 56px 0 0;
+  overflow-y: auto;
+  padding: 2px 10px 10px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+button.when-slot {
+  display: flex;
+  width: 100%;
+  height: 32px;
+  justify-content: flex-start;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 450;
+  font-variant-numeric: tabular-nums;
+}
+button.when-slot.hour {
+  color: var(--ink);
+  font-weight: 550;
+}
+button.when-slot:hover {
+  background: var(--surface-3);
+}
+button.when-slot.on,
+button.when-slot.on:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 650;
+}
+.when-length {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+.when-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.when-chips {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+button.when-pill {
+  height: 26px;
+  min-width: 38px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+button.when-pill:hover {
+  background: var(--surface-3);
+}
+button.when-pill.on,
+button.when-pill.on:hover {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--line);
+}
+.when-stepper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.when-stepper span {
+  min-width: 82px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.when-stepper .icon-button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.when-ends {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.when-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--line);
+}
+.when-foot .spacer {
+  flex: 1;
+}
+.tz-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+body.phone .when-popover {
+  padding: 0 0 calc(6px + var(--safe-b)) !important;
+}
+body.phone .when-head {
+  padding: 6px 18px 12px;
+}
+body.phone .when-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+body.phone .when-picker,
+body.phone .when-times {
+  min-width: 0;
+}
+body.phone .when-cal {
+  padding: 10px 12px;
+}
+body.phone button.when-day {
+  height: 44px;
+  font-size: 16px;
+}
+body.phone .when-times {
+  border-left: 0;
+  border-top: 1px solid var(--line);
+}
+body.phone .when-field input {
+  font-size: 16px !important;
+  height: 40px !important;
+}
+body.phone .when-slots {
+  position: relative;
+  inset: auto;
+  display: flex;
+  flex: none;
+  height: auto;
+  min-height: 0;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 10px 10px;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+body.phone button.when-slot {
+  flex: none;
+  width: auto;
+  height: 40px;
+  padding: 0 12px;
+  font-size: 15px;
+  scroll-snap-align: center;
+  border: 1px solid var(--line);
+}
+body.phone .when-length {
+  gap: 10px;
+}
+body.phone .when-chips {
+  width: 100%;
+  justify-content: space-between;
+}
+body.phone button.when-pill {
+  flex: 1;
+  height: 36px;
+  font-size: 14px;
+}
+body.phone .when-stepper .icon-button {
+  width: 40px;
+  height: 40px;
+}
+body.phone .when-foot button {
+  height: 44px;
+}
+body.phone .when-foot .link {
+  height: auto;
+}
+body.phone .when-head .when-tz,
+body.phone .when-zone {
+  display: none;
+}

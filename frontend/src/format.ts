@@ -1,4 +1,6 @@
-/** Default title for a new meeting: its creation time, e.g. "Fri, Nov 6 · 4:36 PM". */
+import { fmt } from './time';
+
+/** Default title for a new meeting: its creation time in the chosen zone, e.g. "Fri, Nov 6 · 4:36 PM". */
 export function defaultTitle(date: Date) {
-  return `${date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+  return `${fmt(date, { weekday: 'short', month: 'short', day: 'numeric' })} · ${fmt(date, { hour: 'numeric', minute: '2-digit' })}`;
 }

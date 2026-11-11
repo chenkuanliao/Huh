@@ -1426,3 +1426,42 @@ def test_force_delete_stops_running_work(client, monkeypatch):
     worker.process(job)
     with tx() as s:
         assert s.get(Job, job.id) is None
+
+
+def test_meeting_time_defaults_and_edits(client):
+    m = client.post("/api/meetings", json={"title": "Sync"}).json()
+    # A new note's meeting starts when it was created and lasts an hour.
+    assert m["starts_at"] == m["created_at"] and m["duration_minutes"] == 60
+    before = m["updated_at"]
+    # Times may be given in any offset; they are stored as the same instant (shown back in UTC).
+    m = client.patch(
+        f"/api/meetings/{m['id']}", json={"starts_at": "2027-01-05T09:30:00-06:00", "duration_minutes": 45}
+    ).json()
+    assert m["starts_at"] == "2027-01-05T15:30:00Z" and m["duration_minutes"] == 45
+    # Rescheduling is organisation, not an edit.
+    assert m["updated_at"] == before
+    for bad in [{"starts_at": "2027-01-05T09:30:00"}, {"starts_at": "soon"}, {"starts_at": 5},
+                {"duration_minutes": 0}, {"duration_minutes": 24 * 60 + 1}, {"duration_minutes": "60"},
+                {"duration_minutes": True}]:
+        assert client.patch(f"/api/meetings/{m['id']}", json=bad).status_code == 422, bad
+    m = client.post("/api/meetings", json={"starts_at": "2030-06-01T12:00:00Z", "duration_minutes": 90}).json()
+    assert (m["starts_at"], m["duration_minutes"]) == ("2030-06-01T12:00:00Z", 90)
+    text = client.get(f"/api/meetings/{m['id']}/export?format=md").text
+    assert "Sat, Jun 1, 2030 · 7:00 AM – 8:30 AM CDT" in text
+
+
+def test_time_zone_setting(client):
+    assert client.get("/api/settings").json()["time_zone"] == "America/Chicago"
+    assert client.put("/api/settings", json={"time_zone": "Asia/Taipei"}).json()["time_zone"] == "Asia/Taipei"
+    assert client.put("/api/settings", json={"time_zone": "Mars/Olympus"}).status_code == 422
+    assert client.put("/api/settings", json={"time_zone": ""}).status_code == 422
+    assert client.get("/api/settings").json()["time_zone"] == "Asia/Taipei"
+
+
+def test_meeting_time_backfilled_for_older_meetings(client):
+    m = client.post("/api/meetings", json={}).json()
+    with tx() as s:
+        s.execute(text("UPDATE meetings SET starts_at = NULL"))
+    init()
+    got = client.get(f"/api/meetings/{m['id']}").json()
+    assert got["starts_at"] == got["created_at"] and got["duration_minutes"] == 60

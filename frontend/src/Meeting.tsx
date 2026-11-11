@@ -3,6 +3,8 @@ import Markdown, { SourceInfo } from './Markdown';
 import AudioPlayer, { clock, PlayerHandle } from './AudioPlayer';
 import FindBar from './FindBar';
 import { defaultTitle } from './format';
+import { MeetingWhen } from './MeetingTime';
+import { fmt, useZone } from './time';
 import { Archive, BookA, Pause, Play, Square, Columns2, ListTodo, Maximize2, NotebookPen, PanelRightClose, Rows3, AudioLines, ChevronDown, CircleAlert, Download, Ellipsis, FileAudio, History, Languages, LocateFixed, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 import { api, Detail, errorText, Folder, Generation, Job, Meeting, peek, send, Template } from './api';
 import { FolderGlyph, folderVars } from './folders';
@@ -56,7 +58,7 @@ const words = (md: string) => (md.trim() ? md.trim().split(/\s+/).length : 0);
 
 const time = clock;
 
-const versionTime = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const versionTime = (iso: string) => fmt(iso, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 /** The saved AI version whose text is currently shown in AI notes, if any. */
 /** The tab a meeting opens on: AI notes once they exist, otherwise My notes. */
 const openingTab = (d: Detail | null): Tab => (d?.enhanced_notes.trim() ? 'enhanced' : 'notes');
@@ -160,6 +162,7 @@ export default function MeetingView({
   request?: MeetingRequest | null;
 }) {
   const toast = useToast();
+  useZone(); // dates and times re-render when the time zone setting changes
   // A meeting opened before (or prefetched on hover/touch) shows at once; the load below refreshes it.
   const [detail, setDetail] = useState<Detail | null>(() => peek<Detail>(`/meetings/${id}`) || null);
   const [error, setError] = useState('');
@@ -516,10 +519,14 @@ export default function MeetingView({
     <div className={cx('meeting', sideBySide && 'split', phone && 'phone')} ref={root}>
       <header className="meeting-header">
         <div className="meeting-meta">
-          <span>
-            {created.toLocaleDateString(undefined, phone ? { weekday: 'short', month: 'short', day: 'numeric' } : { weekday: 'long', month: 'long', day: 'numeric' })} ·{' '}
-            {created.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-          </span>
+          <MeetingWhen
+            meeting={detail}
+            phone={phone}
+            onSave={async body => {
+              await patch(body);
+              onListChanged();
+            }}
+          />
           {status && <Badge tone={status.tone}>{status.label}</Badge>}
           {folder && (
             <button type="button" className="meeting-folder" style={folderVars(folder)} title={`Open ${folder.name}`} onClick={() => onOpenFolder?.(folder.id)}>
@@ -1057,7 +1064,7 @@ function Transcript({
     transcribed: 'Transcribed',
     error: 'Failed',
   };
-  const startedAt = (r: { created_at: string }) => new Date(r.created_at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const startedAt = (r: { created_at: string }) => fmt(r.created_at, { hour: 'numeric', minute: '2-digit' });
   const playable = current ? !LIVE_STATUSES.includes(current.status) : false;
   const index = current ? recordings.indexOf(current) : -1;
 

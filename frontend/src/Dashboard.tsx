@@ -4,6 +4,7 @@ import { ArrowRight, AudioLines, ChevronDown, CircleAlert, CircleCheck, Clock, E
 import { api, ApiError, errorText, Folder, Job, Meeting, send, Settings as SettingsT } from './api';
 import { stripSources, toggleTask } from './Markdown';
 import { Callout, cx, Menu, MenuItem, Spinner, useToast } from './ui';
+import { daysAgo, fmt, fromWall, meetingDate, wall } from './time';
 import { FolderGlyph, FolderTile, folderVars } from './folders';
 import { filterTodos, groupTodos, TodoFilterChips, TodoGroup, TodoViewMenu, useTodoView } from './todoView';
 
@@ -31,10 +32,9 @@ function undoBelongsElsewhere(target: EventTarget | null) {
 const OPEN_TASK = /^(?:\s*>)*\s*(?:[-*+]|\d+[.)])\s+\[ \]\s+(.+)$/;
 
 function startOfWeek(d: Date) {
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const day = (x.getDay() + 6) % 7; // Monday first
-  x.setDate(x.getDate() - day);
-  return x.getTime();
+  const w = wall(d);
+  const day = (w.weekday + 6) % 7; // Monday first
+  return fromWall({ y: w.y, mo: w.mo, d: w.d - day, h: 0, mi: 0 }).getTime();
 }
 
 export function duration(seconds: number) {
@@ -95,21 +95,20 @@ export function useDashData() {
   return data;
 }
 
+/** "Today", "Yesterday", "3 days ago", "Tomorrow", "Nov 14", counted in the chosen time zone. */
 export function relativeDay(iso: string) {
-  const d = new Date(iso);
-  const start = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const days = Math.round((start(new Date()) - start(d)) / 86400000);
-  if (days <= 0) return 'Today';
+  const days = daysAgo(iso);
+  if (days === 0) return 'Today';
   if (days === 1) return 'Yesterday';
-  if (days < 7) return `${days} days ago`;
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+  if (days === -1) return 'Tomorrow';
+  if (days > 1 && days < 7) return `${days} days ago`;
+  return fmt(iso, { month: 'short', day: 'numeric', ...(wall(iso).y !== wall(Date.now()).y ? { year: 'numeric' } : {}) });
 }
 
 function shortWhen(iso: string) {
-  const d = new Date(iso);
   const day = relativeDay(iso);
-  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  return day === 'Today' || day === 'Yesterday' ? `${day}, ${time}` : day.endsWith('ago') ? d.toLocaleDateString(undefined, { weekday: 'short' }) + `, ${time}` : day;
+  const time = fmt(iso, { hour: 'numeric', minute: '2-digit' });
+  return day === 'Today' || day === 'Yesterday' || day === 'Tomorrow' ? `${day}, ${time}` : day.endsWith('ago') ? fmt(iso, { weekday: 'short' }) + `, ${time}` : day;
 }
 
 /** Drag-and-drop wiring from the app shell, so meetings move between Home, folder pages and the sidebar. */
@@ -183,7 +182,7 @@ export function MeetingRow({
           </span>
           <span className={cx('mrow-snippet truncate', !snippet && 'empty')}>{snippet || 'No notes yet'}</span>
         </span>
-        <span className="mrow-when" title={new Date(m.updated_at).toLocaleString()}>
+        <span className="mrow-when" title={`Edited ${fmt(m.updated_at, { dateStyle: 'medium', timeStyle: 'short' })}`}>
           {recording ? 'Recording now' : shortWhen(m.updated_at)}
         </span>
       </button>
@@ -602,7 +601,7 @@ export default function Dashboard({
       totalSec = 0,
       ai = 0;
     for (const m of meetings) {
-      const t = new Date(m.created_at || m.updated_at).getTime();
+      const t = new Date(meetingDate(m)).getTime();
       const s = data?.meetings[m.id];
       totalSec += s?.recorded_seconds || 0;
       ai += s?.generations || 0;
@@ -629,7 +628,7 @@ export default function Dashboard({
     <div className="dashboard">
       <header className="dash-head">
         <div>
-          <p className="dash-date">{now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+          <p className="dash-date">{fmt(now, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
           <h1>{greeting}</h1>
           <p className="muted">
             {meetings.length === 0

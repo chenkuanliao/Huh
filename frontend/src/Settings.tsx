@@ -24,6 +24,7 @@ import { api, ChatGPTStatus, errorText, send, Settings as SettingsT, SttModels, 
 import { OUTPUT_LANGUAGES, PROVIDERS, ProviderInfo, providerInfo, STT_MODELS } from './providers';
 import { Badge, Callout, cx, Field, Segmented, Select, Spinner, Switch, useToast } from './ui';
 import Templates from './Templates';
+import { TimeZonePanel } from './TimeZone';
 import { GlossaryPanel } from './Glossary';
 import { activeIndex, AIEntry, entryProblem, moveEntry, sameEntry, setProviderModel } from './aiOrder';
 import { searchSettings, SECTION_LABELS, SettingEntry, SettingMatch, SettingsSection } from './settingsSearch';
@@ -1205,6 +1206,7 @@ function NotesSettings({ settings, save }: { settings: SettingsT; save: Save }) 
           />
         </div>
       </section>
+      <TimeZonePanel value={settings.time_zone} onChange={time_zone => void save({ time_zone }, 'Meeting times now show in this time zone.').catch(() => {})} />
       <section className="panel" data-setting="notes-keys">
         <div className="panel-head">
           <div>

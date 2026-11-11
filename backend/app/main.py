@@ -477,11 +477,19 @@ def create_meeting(body: dict):
         if tid:
             ai_template(s, tid)
         fid = body.get("folder_id")
+        created = now()
         m = Meeting(
+            created_at=created,
+            updated_at=created,
+            starts_at=created,
             title=string(body.get("title", "Untitled meeting"), "title", 500),
             template_id=tid,
             folder_id=require(s, Folder, valid_id(fid)).id if fid else None,
         )
+        if body.get("starts_at"):
+            m.starts_at = instant(body["starts_at"], "starts_at")
+        if body.get("duration_minutes") is not None:
+            m.duration_minutes = meeting_minutes(body["duration_minutes"])
         s.add(m)
         s.flush()
         return public(m)
@@ -554,8 +562,12 @@ def edit_meeting(mid: str, body: dict):
             m.archived = boolean(body["archived"], "archived")
         if "glossary" in body:
             m.glossary = glossary_entries(body["glossary"])
-        # Filing, archiving and AI context are organisation, not edits; keep the meeting's place in "recent".
-        if set(body) - {"folder_id", "archived", "glossary"}:
+        if "starts_at" in body:
+            m.starts_at = instant(body["starts_at"], "starts_at")
+        if "duration_minutes" in body:
+            m.duration_minutes = meeting_minutes(body["duration_minutes"])
+        # Filing, archiving, AI context and scheduling are organisation, not edits; keep the meeting's place in "recent".
+        if set(body) - {"folder_id", "archived", "glossary", "starts_at", "duration_minutes"}:
             m.updated_at = now()
         s.flush()
         return public(m)
@@ -696,9 +708,13 @@ def export(mid: str, format: str = "md"):
     if format != "md":
         fail("Only Markdown export is supported", 422)
     d = detail(mid)
+    with tx() as s:
+        zone = settings(s)["time_zone"]
     text = (
         "# "
         + d["title"]
+        + "\n\n"
+        + meeting_when(d["starts_at"], d["duration_minutes"], zone)
         + "\n\n## Notes\n\n"
         + d["notes"]
         + "\n\n## AI notes\n\n"
@@ -1177,6 +1193,7 @@ def write_settings(body: dict):
             fail("Invalid editor view", 422)
         if v["back_behavior"] not in ["up", "history"]:
             fail("Invalid back behavior", 422)
+        v["time_zone"] = time_zone(v["time_zone"])
         if v["base_url"] and (
             urlsplit(v["base_url"]).scheme not in ["http", "https"]
             or urlsplit(v["base_url"]).username
