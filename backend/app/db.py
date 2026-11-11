@@ -70,6 +70,10 @@ class Meeting(Base):
     glossary: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[float] = mapped_column(Float, default=now)
     updated_at: Mapped[float] = mapped_column(Float, default=now)
+    # When the meeting happens (UTC epoch seconds) and how long it lasts. Defaults to the moment the
+    # note was created and one hour; it can be moved to any date, including the future.
+    starts_at: Mapped[float | None] = mapped_column(Float, nullable=True, default=now, index=True)
+    duration_minutes: Mapped[int] = mapped_column(Integer, default=60, server_default=text("60"))
     status: Mapped[str] = mapped_column(String, default="idle")
     state: Mapped[dict] = mapped_column(
         JSON,
@@ -211,6 +215,14 @@ def init():
             c.execute(text("ALTER TABLE meetings ADD COLUMN archived BOOLEAN NOT NULL DEFAULT false"))
         if "notes_language" not in columns:
             c.execute(text("ALTER TABLE meetings ADD COLUMN notes_language VARCHAR"))
+        # Additive migration for installations created before meeting times existed: a meeting
+        # starts when its note was created and lasts an hour.
+        if "starts_at" not in columns:
+            c.execute(text("ALTER TABLE meetings ADD COLUMN starts_at FLOAT"))
+            c.execute(text("CREATE INDEX IF NOT EXISTS ix_meetings_starts_at ON meetings (starts_at)"))
+        if "duration_minutes" not in columns:
+            c.execute(text("ALTER TABLE meetings ADD COLUMN duration_minutes INTEGER NOT NULL DEFAULT 60"))
+        c.execute(text("UPDATE meetings SET starts_at = created_at WHERE starts_at IS NULL"))
         if "output_language" not in {col["name"] for col in inspect(c).get_columns("generations")}:
             c.execute(text("ALTER TABLE generations ADD COLUMN output_language VARCHAR"))
         folder_columns = {col["name"] for col in inspect(c).get_columns("folders")}

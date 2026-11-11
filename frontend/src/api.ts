@@ -122,6 +122,10 @@ export type Meeting = {
   status: string;
   created_at: string;
   updated_at: string;
+  /** When the meeting happens (ISO UTC); defaults to when the note was created. */
+  starts_at: string;
+  /** How long the meeting lasts, in minutes (default 60). */
+  duration_minutes: number;
 };
 /** A name, term, acronym or spelling the AI should know when it writes notes. */
 export type GlossaryEntry = { term: string; meaning: string };
@@ -202,6 +206,8 @@ export type Settings = {
   notes_view: 'live' | 'write' | 'preview';
   ai_notes_view: 'live' | 'write' | 'preview';
   back_behavior: 'up' | 'history';
+  /** IANA zone meeting dates and times are shown and picked in (default America/Chicago). */
+  time_zone: string;
   glossary: GlossaryEntry[];
   /** Ranked models: AI notes use the first one that works and fall back down the list. */
   ai_order: AIEntry[];

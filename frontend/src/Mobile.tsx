@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, ChevronLeft, Ellipsis, FileAudio, FolderPlus, Home, Pencil, ListTodo, Lock, Mic, Monitor, NotebookPen, Plus, Search, Settings as SettingsIcon, Sparkles, X } from 'lucide-react';
 import { Folder, Meeting } from './api';
 import { plain, relativeDay, TodoPanel, useDashData } from './Dashboard';
+import { daysAgo, fmt, fmtTime, meetingDate } from './time';
 import { FolderGlyph, FolderTile, folderVars } from './folders';
 import { cx, Modal, Spinner } from './ui';
 
@@ -228,21 +229,19 @@ export function PhoneTopBar({
 /* --------------------------------------------------------- meeting list */
 
 function when(m: Meeting) {
-  const d = new Date(m.created_at || m.updated_at);
-  const day = relativeDay(d.toISOString());
-  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  return day === 'Today' || day === 'Yesterday' ? time : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const at = meetingDate(m);
+  const days = daysAgo(at);
+  return days === 0 || days === 1 ? fmtTime(at) : fmt(at, { month: 'short', day: 'numeric' });
 }
 
 function groupLabel(iso: string) {
-  const d = new Date(iso);
-  const start = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const days = Math.round((start(new Date()) - start(d)) / 86400000);
-  if (days <= 0) return 'Today';
+  const days = daysAgo(iso);
+  if (days < 0) return 'Upcoming';
+  if (days === 0) return 'Today';
   if (days === 1) return 'Yesterday';
   if (days < 7) return 'This week';
   if (days < 31) return 'This month';
-  return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  return fmt(iso, { month: 'long', year: 'numeric' });
 }
 
 export function PhoneMeetingRow({ meeting: m, folder, onOpen, onMenu }: { meeting: Meeting; folder?: Folder; onOpen: (id: string) => void; onMenu: (m: Meeting, x: number, y: number) => void }) {
@@ -289,10 +288,10 @@ export function PhoneMeetingRow({ meeting: m, folder, onOpen, onMenu }: { meetin
 function GroupedList({ meetings, folders, onOpen, onMenu, empty }: { meetings: Meeting[]; folders: Folder[]; onOpen: (id: string) => void; onMenu: (m: Meeting, x: number, y: number) => void; empty: React.ReactNode }) {
   const byId = useMemo(() => new Map(folders.map(f => [f.id, f])), [folders]);
   const groups = useMemo(() => {
-    const sorted = [...meetings].sort((a, b) => (b.created_at || b.updated_at).localeCompare(a.created_at || a.updated_at));
+    const sorted = [...meetings].sort((a, b) => meetingDate(b).localeCompare(meetingDate(a)));
     const out: { label: string; items: Meeting[] }[] = [];
     for (const m of sorted) {
-      const label = groupLabel(m.created_at || m.updated_at);
+      const label = groupLabel(meetingDate(m));
       const g = out.find(x => x.label === label);
       if (g) g.items.push(m);
       else out.push({ label, items: [m] });
@@ -540,7 +539,7 @@ export function PhoneSearch({ meetings, folders, actions, onOpen, onOpenFolder }
                     <button type="button" className="prow" data-meeting={m.id} onClick={() => onOpen(m.id, q.trim())} style={f ? folderVars(f) : undefined}>
                       <span className="prow-top">
                         <strong className="truncate">{m.title || 'Untitled meeting'}</strong>
-                        <span className="prow-when">{relativeDay(m.created_at || m.updated_at)}</span>
+                        <span className="prow-when">{relativeDay(meetingDate(m))}</span>
                       </span>
                       {ex && (
                         <span className="prow-snippet">

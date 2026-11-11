@@ -2,6 +2,7 @@
 
 import secrets
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import HTTPException
 from sqlalchemy import select
 from .db import *
@@ -30,6 +31,9 @@ DEFAULTS = dict(
     # Ranked [{provider, model}]: AI notes use the first one that works and fall back down the list.
     # Empty means "just provider/model" (settings saved before the order existed).
     ai_order=[],
+    # IANA time zone that meeting dates and times are shown and picked in. Meetings are stored as
+    # instants, so changing it shows the same moment in the new zone.
+    time_zone="America/Chicago",
 )
 AI_ORDER_MAX = 12
 PROVIDERS = {
@@ -72,7 +76,7 @@ def iso(value):
 
 def public(obj):
     fields = {
-        Meeting: "id title notes notes_revision enhanced_notes enhanced_revision template_id language notes_language folder_id archived glossary created_at updated_at status",
+        Meeting: "id title notes notes_revision enhanced_notes enhanced_revision template_id language notes_language folder_id archived glossary created_at updated_at starts_at duration_minutes status",
         Folder: "id name color icon glossary created_at",
         Recording: "id meeting_id device_id label mime_type status created_at duration bytes chunk_count",
         Device: "id name meeting_id ready backup_enabled last_seen recording_id",
@@ -82,9 +86,13 @@ def public(obj):
         Generation: "id content created_at provider model template_name notes_revision output_language",
     }[type(obj)].split()
     result = {key: getattr(obj, key) for key in fields}
+    if "starts_at" in result and result["starts_at"] is None:
+        result["starts_at"] = obj.created_at
+    if "duration_minutes" in result and not result["duration_minutes"]:
+        result["duration_minutes"] = 60
     if "glossary" in result:
         result["glossary"] = result["glossary"] or []
-    for key in ["created_at", "updated_at", "last_seen"]:
+    for key in ["created_at", "updated_at", "last_seen", "starts_at"]:
         if key in result:
             result[key] = iso(result[key])
     if isinstance(obj, Device):
@@ -125,6 +133,56 @@ def ai_order_entries(value):
         seen.add((p, model))
         out.append({"provider": p, "model": model})
     return out
+
+
+MEETING_MAX_MINUTES = 24 * 60
+
+
+def instant(value, name):
+    """An ISO 8601 date-time with an explicit offset (e.g. 2026-11-10T15:00:00Z) as UTC epoch seconds."""
+    if not isinstance(value, str) or len(value) > 64:
+        fail(f"Invalid {name}", 422)
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        fail(f"Invalid {name}", 422)
+    if parsed.tzinfo is None:
+        fail(f"{name} needs a time zone offset", 422)
+    if not 1900 <= parsed.year <= 2200:
+        fail(f"Invalid {name}", 422)
+    return parsed.timestamp()
+
+
+def meeting_minutes(value):
+    """A meeting length in whole minutes, 1 minute to 24 hours."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MEETING_MAX_MINUTES:
+        fail("Meeting length must be between 1 minute and 24 hours", 422)
+    return value
+
+
+def time_zone(value):
+    """An IANA time zone name such as America/Chicago."""
+    if not isinstance(value, str) or not value or len(value) > 64:
+        fail("Invalid time zone", 422)
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError):
+        fail("Unknown time zone", 422)
+    return value
+
+
+def meeting_when(starts_at, minutes, zone):
+    """'Tue, Nov 10, 2026 · 2:00 PM – 3:00 PM CST' in the owner's time zone (for exports)."""
+    try:
+        tz = ZoneInfo(zone)
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = timezone.utc
+    start = datetime.fromisoformat(starts_at.replace("Z", "+00:00")).astimezone(tz)
+    end = datetime.fromtimestamp(start.timestamp() + minutes * 60, tz)
+    clock = lambda x: x.strftime("%I:%M %p").lstrip("0")
+    day = lambda x: f"{x:%a}, {x:%b} {x.day}, {x.year}"
+    tail = clock(end) if end.date() == start.date() else f"{day(end)} · {clock(end)}"
+    return f"{day(start)} · {clock(start)} – {tail} {end.tzname()}"
 
 
 GLOSSARY_MAX_ENTRIES = 300

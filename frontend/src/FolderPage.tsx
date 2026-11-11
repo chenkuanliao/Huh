@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { AudioLines, BookA, Ellipsis, FileAudio, ListTodo, Mic, Palette, Plus, Search, Sparkles } from 'lucide-react';
 import { Folder, Meeting } from './api';
+import { meetingDate } from './time';
 import { collectTodos, duration, MeetingDnd, MeetingRow, relativeDay, TodoPanel, useDashData } from './Dashboard';
 import { FolderTile, folderVars } from './folders';
 import { cx, Menu, MenuItem, Segmented, Spinner } from './ui';
@@ -54,7 +55,7 @@ export default function FolderPage({
     const q = filter.trim().toLowerCase();
     const out = meetings.filter(m => !q || `${m.title} ${m.notes} ${m.enhanced_notes}`.toLowerCase().includes(q));
     if (sort === 'name') out.sort((a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base', numeric: true }));
-    else out.sort((a, b) => (sort === 'recent' ? b.updated_at.localeCompare(a.updated_at) : a.created_at.localeCompare(b.created_at)));
+    else out.sort((a, b) => (sort === 'recent' ? b.updated_at.localeCompare(a.updated_at) : meetingDate(a).localeCompare(meetingDate(b))));
     return out;
   }, [meetings, filter, sort]);
 

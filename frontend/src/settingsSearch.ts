@@ -140,6 +140,13 @@ export const SETTINGS_INDEX: SettingEntry[] = [
     keywords: 'back navigation navigate history previous page up one level parent folder home browser mouse alt arrow return',
   },
   {
+    id: 'notes-timezone',
+    section: 'notes',
+    title: 'Time zone',
+    description: 'The time zone meeting dates and times are shown and picked in.',
+    keywords: 'timezone time zone tz clock houston central cst cdt utc gmt offset travel calendar meeting date time daylight saving dst',
+  },
+  {
     id: 'notes-keys',
     section: 'notes',
     title: 'Keyboard shortcuts & formatting',
