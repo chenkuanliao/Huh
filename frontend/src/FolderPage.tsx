@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { AudioLines, BookA, Ellipsis, FileAudio, ListTodo, Mic, Palette, Plus, Search, Sparkles } from 'lucide-react';
 import { Folder, Meeting } from './api';
 import { meetingDate } from './time';
-import { collectTodos, duration, MeetingDnd, MeetingRow, relativeDay, TodoPanel, useDashData } from './Dashboard';
+import { collectTodos, duration, hasAINotes, MeetingDnd, MeetingRow, relativeDay, TodoPanel, useDashData } from './Dashboard';
 import { FolderTile, folderVars } from './folders';
 import { cx, Menu, MenuItem, Segmented, Spinner } from './ui';
 
@@ -47,7 +47,7 @@ export default function FolderPage({
   const [sort, setSort] = useState<Sort>('recent');
 
   const seconds = meetings.reduce((n, m) => n + (data?.meetings[m.id]?.recorded_seconds || 0), 0);
-  const ai = meetings.reduce((n, m) => n + (data?.meetings[m.id]?.generations || 0), 0);
+  const ai = meetings.filter(hasAINotes).length;
   const todos = useMemo(() => collectTodos(meetings).length, [meetings]);
   const latest = meetings.reduce<string | null>((x, m) => (!x || m.updated_at > x ? m.updated_at : x), null);
 
@@ -81,7 +81,7 @@ export default function FolderPage({
             )}
             {ai > 0 && (
               <span>
-                <Sparkles size={14} /> {ai} AI note{ai === 1 ? '' : 's'}
+                <Sparkles size={14} /> {ai} with AI notes
               </span>
             )}
             {todos > 0 && (

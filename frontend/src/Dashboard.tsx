@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowRight, AudioLines, ChevronDown, CircleAlert, CircleCheck, Clock, Ellipsis, FileAudio, FileText, FolderPlus, ListTodo, Mic, Pause, Plus, Sparkles, CalendarDays, Undo2, X } from 'lucide-react';
+import { ArrowRight, AudioLines, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Clock, Ellipsis, FileAudio, FileText, FolderPlus, ListTodo, Mic, Pause, Plus, Sparkles, CalendarDays, Undo2, X } from 'lucide-react';
 import { api, ApiError, errorText, Folder, Job, Meeting, send, Settings as SettingsT } from './api';
 import { stripSources, toggleTask } from './Markdown';
-import { Callout, cx, Menu, MenuItem, Spinner, useToast } from './ui';
-import { daysAgo, fmt, fromWall, meetingDate, wall } from './time';
+import { Callout, cx, Menu, MenuItem, Segmented, Spinner, useToast } from './ui';
+import { dayNumber, daysAgo, fmt, fromWall, meetingDate, timeRange, useZone, wall } from './time';
 import { FolderGlyph, FolderTile, folderVars } from './folders';
 import { filterTodos, groupTodos, TodoFilterChips, TodoGroup, TodoViewMenu, useTodoView } from './todoView';
 
@@ -57,13 +57,6 @@ export function plain(markdown: string) {
     )
     .filter(Boolean)
     .join(' · ');
-}
-
-function delta(now: number, before: number, unit = '') {
-  const d = now - before;
-  if (!before && !now) return 'Nothing yet';
-  if (d === 0) return 'Same as last week';
-  return `${d > 0 ? '+' : '−'}${Math.abs(d)}${unit} vs last week`;
 }
 
 export function collectTodos(meetings: Meeting[]) {
@@ -174,7 +167,7 @@ export function MeetingRow({
                 <AudioLines size={12} /> {duration(s.recorded_seconds)}
               </span>
             ) : null}
-            {s?.generations ? (
+            {hasAINotes(m) ? (
               <span className="mrow-stat ai" title="Has AI notes">
                 <Sparkles size={12} /> AI
               </span>
@@ -541,6 +534,291 @@ function FolderCard({ folder: f, meetings, stats, onOpen, actions, dnd }: { fold
   );
 }
 
+/** Whether a meeting has AI notes you can read right now (not how many times they were written). */
+export const hasAINotes = (m: Meeting) => !!(m.enhanced_notes || '').trim();
+
+const DAY = 86400000;
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+function StatTile({ icon: Icon, label, value, sub }: { icon: typeof Clock; label: string; value: React.ReactNode; sub: React.ReactNode }) {
+  return (
+    <div className="stat">
+      <span className="stat-label">
+        <span className="stat-icon" aria-hidden>
+          <Icon size={14} />
+        </span>
+        {label}
+      </span>
+      <span className="stat-value">{value}</span>
+      <span className="stat-delta">{sub}</span>
+    </div>
+  );
+}
+
+/** "+12m", "−3" etc. against last week, coloured by direction. */
+function Trend({ now, before, format = String }: { now: number; before: number; format?: (n: number) => string }) {
+  if (!now && !before) return <>Nothing last week either</>;
+  const d = now - before;
+  if (Math.abs(d) < (format === String ? 1 : 60)) return <>Same as last week</>;
+  return (
+    <>
+      <span className={cx('trend', d > 0 ? 'up' : 'down')}>
+        {d > 0 ? '+' : '−'}
+        {format(Math.abs(d))}
+      </span>{' '}
+      vs last week
+    </>
+  );
+}
+
+type CalView = 'day' | 'week' | 'month';
+
+/** A planned length: "45m", "1h", "1h 30m". */
+const length = (minutes: number) => (minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h${minutes % 60 ? ` ${minutes % 60}m` : ''}`);
+const CAL_VIEW_KEY = 'huh.home.calendarView';
+
+function readCalView(): CalView {
+  try {
+    const v = localStorage.getItem(CAL_VIEW_KEY);
+    if (v === 'day' || v === 'week' || v === 'month') return v;
+  } catch {}
+  return 'week';
+}
+
+/** Noon on the calendar day `n` days after the day of `from` (noon keeps DST shifts from changing the day). */
+function dayAt(from: number | Date, n = 0) {
+  const w = wall(from);
+  return fromWall({ y: w.y, mo: w.mo, d: w.d + n, h: 12, mi: 0 });
+}
+
+/** Meetings on the calendar: one day, a week (Monday first) or a month, stepping back and forward a page at a time. */
+function CalendarPanel({ meetings, folderById, stats, onOpen }: { meetings: Meeting[]; folderById: Map<string, Folder>; stats: DashData | null; onOpen: (id: string) => void }) {
+  const [view, setViewState] = useState<CalView>(readCalView);
+  // The day the calendar is looking at; Today resets it.
+  const [anchor, setAnchor] = useState(() => dayAt(Date.now()));
+  const today = dayNumber(Date.now());
+  const setView = (v: CalView) => {
+    setViewState(v);
+    try {
+      localStorage.setItem(CAL_VIEW_KEY, v);
+    } catch {}
+  };
+
+  const byDay = useMemo(() => {
+    const out = new Map<number, Meeting[]>();
+    for (const m of meetings) {
+      const n = dayNumber(meetingDate(m));
+      out.set(n, [...(out.get(n) || []), m]);
+    }
+    for (const list of out.values()) list.sort((a, b) => meetingDate(a).localeCompare(meetingDate(b)));
+    return out;
+  }, [meetings]);
+
+  const a = wall(anchor);
+  const weekStart = dayAt(anchor, -((a.weekday + 6) % 7));
+  const monthStart = fromWall({ y: a.y, mo: a.mo, d: 1, h: 12, mi: 0 });
+  const monthLen = new Date(Date.UTC(a.y, a.mo, 0)).getUTCDate();
+  // The month grid runs from the Monday on or before the 1st to the Sunday on or after the last day.
+  const gridStart = dayAt(monthStart, -((wall(monthStart).weekday + 6) % 7));
+  const gridDays = Math.ceil((((wall(monthStart).weekday + 6) % 7) + monthLen) / 7) * 7;
+
+  const days =
+    view === 'day' ? [anchor] : view === 'week' ? Array.from({ length: 7 }, (_, i) => dayAt(weekStart, i)) : Array.from({ length: monthLen }, (_, i) => dayAt(monthStart, i));
+  const inRange = days.flatMap(d => byDay.get(dayNumber(d)) || []);
+  const seconds = inRange.reduce((n, m) => n + (stats?.meetings[m.id]?.recorded_seconds || 0), 0);
+
+  const step = (dir: number) => {
+    if (view === 'day') setAnchor(dayAt(anchor, dir));
+    else if (view === 'week') setAnchor(dayAt(anchor, dir * 7));
+    else setAnchor(fromWall({ y: a.y, mo: a.mo + dir, d: 1, h: 12, mi: 0 }));
+  };
+  const showing =
+    view === 'day' ? dayNumber(anchor) === today : view === 'week' ? dayNumber(weekStart) === dayNumber(dayAt(Date.now(), -((wall(Date.now()).weekday + 6) % 7))) : a.y === wall(Date.now()).y && a.mo === wall(Date.now()).mo;
+  const sameYear = a.y === wall(Date.now()).y;
+
+  let title: string;
+  let range: string;
+  if (view === 'day') {
+    const rel = dayNumber(anchor) - today;
+    title = rel === 0 ? 'Today' : rel === -1 ? 'Yesterday' : rel === 1 ? 'Tomorrow' : fmt(anchor, { weekday: 'long' });
+    range = fmt(anchor, { weekday: rel >= -1 && rel <= 1 ? 'long' : undefined, month: 'long', day: 'numeric', year: sameYear ? undefined : 'numeric' });
+  } else if (view === 'week') {
+    const end = dayAt(weekStart, 6);
+    const thisWeekStart = dayNumber(dayAt(Date.now(), -((wall(Date.now()).weekday + 6) % 7)));
+    const rel = Math.round((dayNumber(weekStart) - thisWeekStart) / 7);
+    title = rel === 0 ? 'This week' : rel === -1 ? 'Last week' : rel === 1 ? 'Next week' : `Week of ${fmt(weekStart, { month: 'short', day: 'numeric' })}`;
+    range = `${fmt(weekStart, { month: 'short', day: 'numeric' })} – ${fmt(end, { month: wall(weekStart).mo === wall(end).mo ? undefined : 'short', day: 'numeric' })}`;
+  } else {
+    title = fmt(monthStart, { month: 'long', year: sameYear ? undefined : 'numeric' });
+    range = fmt(monthStart, { year: 'numeric' });
+  }
+
+  const chip = (m: Meeting, compact = false) => {
+    const f = m.folder_id ? folderById.get(m.folder_id) : undefined;
+    const time = fmt(meetingDate(m), { hour: 'numeric', minute: '2-digit' });
+    return (
+      <button
+        key={m.id}
+        type="button"
+        className={cx('week-chip', compact && 'compact', m.status === 'recording' && 'live')}
+        style={f ? folderVars(f) : undefined}
+        title={`${m.title || 'Untitled meeting'} · ${time}${f ? ` · ${f.name}` : ''}`}
+        onClick={() => onOpen(m.id)}
+      >
+        {!compact && <span className="week-chip-time">{time}</span>}
+        <span className="week-chip-title">{m.title || 'Untitled meeting'}</span>
+      </button>
+    );
+  };
+
+  const dayView = () => {
+    const list = byDay.get(dayNumber(anchor)) || [];
+    if (!list.length) return <p className="cal-empty">No meetings {dayNumber(anchor) === today ? 'today' : 'this day'}.</p>;
+    return (
+      <ul className="cal-agenda">
+        {list.map(m => {
+          const f = m.folder_id ? folderById.get(m.folder_id) : undefined;
+          const start = new Date(meetingDate(m));
+          const end = new Date(start.getTime() + (m.duration_minutes || 60) * 60000);
+          const s = stats?.meetings[m.id];
+          const past = end.getTime() < Date.now();
+          const now = !past && start.getTime() <= Date.now();
+          return (
+            <li key={m.id}>
+              <button type="button" className={cx('cal-event', past && 'past', now && 'now')} style={f ? folderVars(f) : undefined} onClick={() => onOpen(m.id)}>
+                <span className="cal-event-time">
+                  <strong>{fmt(start, { hour: 'numeric', minute: '2-digit' })}</strong>
+                  <span>{length(m.duration_minutes || 60)}</span>
+                </span>
+                <span className="cal-event-main">
+                  <strong className="truncate">{m.title || 'Untitled meeting'}</strong>
+                  <span className="cal-event-meta">
+                    {timeRange(start, end)}
+                    {f && (
+                      <span className="recent-folder">
+                        <FolderGlyph folder={f} size={12} />
+                        <span className="truncate">{f.name}</span>
+                      </span>
+                    )}
+                    {s?.recorded_seconds ? (
+                      <span className="mrow-stat">
+                        <AudioLines size={12} /> {duration(s.recorded_seconds)}
+                      </span>
+                    ) : null}
+                    {hasAINotes(m) && (
+                      <span className="mrow-stat ai">
+                        <Sparkles size={12} /> AI
+                      </span>
+                    )}
+                  </span>
+                </span>
+                {now && <span className="cal-now">Now</span>}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  };
+
+  const weekView = () => (
+    <ol className="week-days">
+      {days.map(d => {
+        const n = dayNumber(d);
+        const list = byDay.get(n) || [];
+        return (
+          <li key={n} className={cx('week-day', n === today && 'today', n < today && 'past', !list.length && 'empty')}>
+            <button type="button" className="week-day-head" title="Open this day" onClick={() => (setAnchor(d), setView('day'))}>
+              <span className="week-day-name">{fmt(d, { weekday: 'short' })}</span>
+              <span className="week-day-num">{wall(d).d}</span>
+            </button>
+            {list.length > 0 && (
+              <span className="week-day-items">
+                {list.slice(0, 3).map(m => chip(m))}
+                {list.length > 3 && (
+                  <button type="button" className="week-more" onClick={() => (setAnchor(d), setView('day'))}>
+                    +{list.length - 3} more
+                  </button>
+                )}
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+
+  const monthView = () => (
+    <div className="cal-month">
+      {Array.from({ length: 7 }, (_, i) => (
+        <span key={i} className="cal-month-dow">
+          {fmt(dayAt(gridStart, i), { weekday: 'short' })}
+        </span>
+      ))}
+      {Array.from({ length: gridDays }, (_, i) => {
+        const d = dayAt(gridStart, i);
+        const n = dayNumber(d);
+        const list = byDay.get(n) || [];
+        const outside = wall(d).mo !== a.mo;
+        return (
+          <div key={n} className={cx('cal-cell', outside && 'outside', n === today && 'today', n < today && 'past')}>
+            <button type="button" className="cal-cell-num" aria-label={`Open ${fmt(d, { month: 'long', day: 'numeric' })}`} onClick={() => (setAnchor(d), setView('day'))}>
+              {wall(d).d}
+            </button>
+            {list.slice(0, 2).map(m => chip(m, true))}
+            {list.length > 2 && (
+              <button type="button" className="week-more" onClick={() => (setAnchor(d), setView('day'))}>
+                +{list.length - 2} more
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <section className="panel dash-week" aria-label="Calendar">
+      <div className="panel-head">
+        <div>
+          <h2>{title}</h2>
+          <p className="muted">
+            {range} · {inRange.length ? plural(inRange.length, 'meeting') : 'No meetings'}
+            {seconds > 0 && ` · ${duration(seconds)} recorded`}
+          </p>
+        </div>
+        <div className="week-nav">
+          <Segmented
+            size="sm"
+            ariaLabel="Calendar view"
+            value={view}
+            onChange={setView}
+            options={[
+              { value: 'day', label: 'Day' },
+              { value: 'week', label: 'Week' },
+              { value: 'month', label: 'Month' },
+            ]}
+          />
+          <span className="week-nav-steps">
+            {!showing && (
+              <button type="button" className="ghost sm" onClick={() => setAnchor(dayAt(Date.now()))}>
+                Today
+              </button>
+            )}
+            <button type="button" className="icon-button sm" aria-label={`Previous ${view}`} title={`Previous ${view}`} onClick={() => step(-1)}>
+              <ChevronLeft size={17} />
+            </button>
+            <button type="button" className="icon-button sm" aria-label={`Next ${view}`} title={`Next ${view}`} onClick={() => step(1)}>
+              <ChevronRight size={17} />
+            </button>
+          </span>
+        </div>
+      </div>
+      {view === 'day' ? dayView() : view === 'week' ? weekView() : monthView()}
+    </section>
+  );
+}
+
 export default function Dashboard({
   meetings,
   folders,
@@ -573,6 +851,7 @@ export default function Dashboard({
   creating: boolean;
   dnd?: MeetingDnd;
 }) {
+  useZone();
   const data = useDashData();
   const [settings, setSettings] = useState<SettingsT | null>(null);
   useEffect(() => {
@@ -588,41 +867,45 @@ export default function Dashboard({
   }, [meetings, folders]);
 
   const now = new Date();
-  const hour = now.getHours();
+  const hour = wall(now).h;
   const greeting = hour < 5 ? 'Working late' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
   const summary = useMemo(() => {
     const week = startOfWeek(now);
-    const lastWeek = week - 7 * 86400000;
+    const lastWeek = week - 7 * DAY;
+    const nextWeek = week + 7 * DAY;
     let thisCount = 0,
       lastCount = 0,
       thisSec = 0,
-      lastSec = 0,
-      totalSec = 0,
-      ai = 0;
+      lastSec = 0;
     for (const m of meetings) {
       const t = new Date(meetingDate(m)).getTime();
       const s = data?.meetings[m.id];
-      totalSec += s?.recorded_seconds || 0;
-      ai += s?.generations || 0;
-      if (t >= week) {
+      if (t >= week && t < nextWeek) {
         thisCount++;
         thisSec += s?.recorded_seconds || 0;
-      } else if (t >= lastWeek) {
+      } else if (t >= lastWeek && t < week) {
         lastCount++;
         lastSec += s?.recorded_seconds || 0;
       }
     }
-    return { thisCount, lastCount, thisSec, lastSec, totalSec, ai };
+    return { thisCount, lastCount, thisSec, lastSec };
   }, [meetings, data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const todos = useMemo(() => collectTodos(meetings), [meetings]);
 
-  const recent = meetings.slice(0, 6);
+  // What's happening today: the next meeting still to start, or how many there are.
+  const today = useMemo(() => {
+    const n = dayNumber(Date.now());
+    const list = meetings.filter(m => dayNumber(meetingDate(m)) === n).sort((a, b) => meetingDate(a).localeCompare(meetingDate(b)));
+    const next = list.find(m => new Date(meetingDate(m)).getTime() > Date.now());
+    return { count: list.length, next };
+  }, [meetings]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const recent = meetings.slice(0, 5);
   const active = (data?.jobs || []).filter(j => j.status === 'queued' || j.status === 'running' || j.status === 'paused');
   const failed = (data?.jobs || []).filter(j => j.status === 'failed');
   const meetingsWithTodos = new Set(todos.map(t => t.meeting.id)).size;
-
 
   return (
     <div className="dashboard">
@@ -630,12 +913,27 @@ export default function Dashboard({
         <div>
           <p className="dash-date">{fmt(now, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
           <h1>{greeting}</h1>
-          <p className="muted">
-            {meetings.length === 0
-              ? 'Your notebook is empty. Start your first meeting below.'
-              : todos.length
-                ? `${todos.length} open to-do${todos.length === 1 ? '' : 's'} across ${meetingsWithTodos} meeting${meetingsWithTodos === 1 ? '' : 's'}.`
-                : 'No open to-dos. Nice.'}
+          <p className="dash-lede">
+            {meetings.length === 0 ? (
+              'Your notebook is empty. Start your first meeting below.'
+            ) : (
+              <>
+                {today.next ? (
+                  <>
+                    Next up:{' '}
+                    <button type="button" className="link" onClick={() => onOpen(today.next!.id)}>
+                      {today.next.title || 'Untitled meeting'}
+                    </button>{' '}
+                    at {fmt(meetingDate(today.next), { hour: 'numeric', minute: '2-digit' })}.{' '}
+                  </>
+                ) : today.count ? (
+                  `${plural(today.count, 'meeting')} today. `
+                ) : (
+                  'Nothing on the calendar today. '
+                )}
+                {todos.length ? `${plural(todos.length, 'open to-do')} across ${plural(meetingsWithTodos, 'meeting')}.` : 'No open to-dos.'}
+              </>
+            )}
           </p>
         </div>
         <div className="dash-actions">
@@ -656,39 +954,6 @@ export default function Dashboard({
           </button>
         </Callout>
       )}
-
-      <section className="stat-row" aria-label="Summary">
-        <div className="stat">
-          <span className="stat-label">
-            <CalendarDays size={15} /> Meetings this week
-          </span>
-          <span className="stat-value">{summary.thisCount}</span>
-          <span className="stat-delta">{delta(summary.thisCount, summary.lastCount)}</span>
-        </div>
-        <div className="stat">
-          <span className="stat-label">
-            <Clock size={15} /> Recorded this week
-          </span>
-          <span className="stat-value">{duration(summary.thisSec)}</span>
-          <span className="stat-delta">{duration(summary.totalSec)} recorded in total</span>
-        </div>
-        <div className="stat">
-          <span className="stat-label">
-            <ListTodo size={15} /> Open to-dos
-          </span>
-          <span className="stat-value">{todos.length}</span>
-          <span className="stat-delta">From AI notes, or your notes if none</span>
-        </div>
-        <div className="stat">
-          <span className="stat-label">
-            <Sparkles size={15} /> AI notes written
-          </span>
-          <span className="stat-value">{summary.ai}</span>
-          <span className="stat-delta">
-            Across {meetings.length} meeting{meetings.length === 1 ? '' : 's'}
-          </span>
-        </div>
-      </section>
 
       {(active.length > 0 || failed.length > 0) && (
         <section className="dash-activity" aria-label="Processing">
@@ -715,36 +980,13 @@ export default function Dashboard({
         </section>
       )}
 
-      <section className="dash-folders" aria-label="Folders">
-        <div className="dash-section-head">
-          <h2>Folders</h2>
-          {folders.length > 0 && (
-            <button type="button" className="ghost sm" onClick={onNewFolder}>
-              <FolderPlus size={15} /> New folder
-            </button>
-          )}
-        </div>
-        {folders.length === 0 ? (
-          <button type="button" className="folder-empty-cta" onClick={onNewFolder}>
-            <FolderPlus size={22} />
-            <span>
-              <strong>Organize meetings into folders</strong>
-              <span className="muted">Give each one a colour and an icon — classes, clients, projects, anything.</span>
-            </span>
-            <ArrowRight size={16} className="muted-icon" />
-          </button>
-        ) : (
-          <div className="folder-grid">
-            {folders.map(f => (
-              <FolderCard key={f.id} folder={f} meetings={inFolder.get(f.id) || []} stats={data} onOpen={() => onOpenFolder(f.id)} actions={folderActions(f)} dnd={dnd} />
-            ))}
-            <button type="button" className="folder-card new" onClick={onNewFolder}>
-              <FolderPlus size={20} />
-              <span>New folder</span>
-            </button>
-          </div>
-        )}
+      <section className="stat-row" aria-label="Summary">
+        <StatTile icon={CalendarDays} label="Meetings this week" value={summary.thisCount} sub={<Trend now={summary.thisCount} before={summary.lastCount} />} />
+        <StatTile icon={Clock} label="Recorded this week" value={duration(summary.thisSec)} sub={<Trend now={summary.thisSec} before={summary.lastSec} format={duration} />} />
+        <StatTile icon={ListTodo} label="Open to-dos" value={todos.length} sub={todos.length ? `In ${plural(meetingsWithTodos, 'meeting')}` : 'All clear'} />
       </section>
+
+      <CalendarPanel meetings={meetings} folderById={folderById} stats={data} onOpen={onOpen} />
 
       <div className="dash-grid">
         <section className="panel dash-recent">
@@ -774,6 +1016,33 @@ export default function Dashboard({
 
         <TodoPanel meetings={meetings} folders={folders} viewKey="home" onReveal={onReveal} reloadMeetings={reloadMeetings} />
       </div>
+
+      <section className="dash-folders" aria-label="Folders">
+        <div className="dash-section-head">
+          <h2>Folders</h2>
+          {folders.length > 0 && (
+            <button type="button" className="ghost sm" onClick={onNewFolder}>
+              <FolderPlus size={15} /> New folder
+            </button>
+          )}
+        </div>
+        {folders.length === 0 ? (
+          <button type="button" className="folder-empty-cta" onClick={onNewFolder}>
+            <FolderPlus size={22} />
+            <span>
+              <strong>Organize meetings into folders</strong>
+              <span className="muted">Give each one a colour and an icon — classes, clients, projects, anything.</span>
+            </span>
+            <ArrowRight size={16} className="muted-icon" />
+          </button>
+        ) : (
+          <div className="folder-grid">
+            {folders.map(f => (
+              <FolderCard key={f.id} folder={f} meetings={inFolder.get(f.id) || []} stats={data} onOpen={() => onOpenFolder(f.id)} actions={folderActions(f)} dnd={dnd} />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
