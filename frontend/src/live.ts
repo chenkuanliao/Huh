@@ -9,7 +9,7 @@ import { Decoration, DecorationSet, EditorView, keymap, placeholder as placehold
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { defineLanguageFacet, Language, LanguageSupport, syntaxTree } from '@codemirror/language';
 import { GFM, parser } from '@lezer/markdown';
-import type { SyntaxNodeRef } from '@lezer/common';
+import type { SyntaxNode, SyntaxNodeRef } from '@lezer/common';
 import { indentEdit, listEnterEdit, shiftListEdit, TextEdit } from './textkeys';
 import { copyText, SOURCE_MARKER } from './Markdown';
 
@@ -22,15 +22,49 @@ export const External = Annotation.define<boolean>();
 
 /* ------------------------------------------------------------- widgets */
 
+/*
+ * List layout. Every list line sits on one grid: each level indents by LIST_STEP, and the marker (dot, number or
+ * checkbox) gets a LIST_SLOT-wide slot, so text lines up across bullets, numbers and to-dos, and wrapped lines
+ * continue under the text. The source indentation is hidden; Tab / Shift-Tab still change it.
+ */
+const LIST_SLOT = 1.6; // em
+const LIST_STEP = 1.6; // em
+
+/** The marker slot at the start of a list line. */
+function markerSlot(kind: string) {
+  const el = document.createElement('span');
+  el.className = `cm-lp-mk cm-lp-mk-${kind}`;
+  return el;
+}
+
 class BulletWidget extends WidgetType {
-  eq() {
-    return true;
+  constructor(readonly depth: number) {
+    super();
+  }
+  eq(o: BulletWidget) {
+    return o.depth === this.depth;
   }
   toDOM() {
-    const el = document.createElement('span');
-    el.className = 'cm-lp-bullet';
+    const el = markerSlot('bullet');
     el.setAttribute('aria-hidden', 'true');
-    el.textContent = '•';
+    const dot = document.createElement('span');
+    dot.className = `cm-lp-dot cm-lp-dot-${this.depth % 3}`;
+    el.append(dot);
+    return el;
+  }
+}
+
+class NumberWidget extends WidgetType {
+  constructor(readonly text: string) {
+    super();
+  }
+  eq(o: NumberWidget) {
+    return o.text === this.text;
+  }
+  toDOM() {
+    const el = markerSlot('num');
+    el.setAttribute('aria-hidden', 'true');
+    el.textContent = this.text;
     return el;
   }
 }
@@ -46,7 +80,10 @@ class CheckWidget extends WidgetType {
     return o.checked === this.checked && o.at === this.at;
   }
   toDOM(view: EditorView) {
+    const slot = markerSlot('check');
+    slot.addEventListener('mousedown', e => e.preventDefault());
     const el = document.createElement('span');
+    slot.append(el);
     el.className = 'cm-lp-check' + (this.checked ? ' checked' : '');
     el.setAttribute('role', 'checkbox');
     el.setAttribute('aria-checked', String(this.checked));
@@ -57,7 +94,7 @@ class CheckWidget extends WidgetType {
       e.preventDefault();
       toggleTaskAt(view, this.at);
     });
-    return el;
+    return slot;
   }
   ignoreEvent() {
     return true;
@@ -114,7 +151,29 @@ class CodeHeadWidget extends WidgetType {
   }
 }
 
-const bullet = Decoration.replace({ widget: new BulletWidget() });
+const listLineCache = new Map<number, Decoration>();
+/** Line layout for a list line at `depth`: wrapped lines start where the text starts. */
+const listLine = (depth: number) =>
+  listLineCache.get(depth) ??
+  (listLineCache.set(
+    depth,
+    Decoration.line({ class: 'cm-lp-li', attributes: { style: `--li-pad: ${depth * LIST_STEP + LIST_SLOT}em; --li-hang: ${LIST_SLOT}em` } }),
+  ),
+  listLineCache.get(depth)!);
+const contLineCache = new Map<number, Decoration>();
+/** A continuation line of a list item's paragraph: under the item's text. */
+const contLine = (depth: number) =>
+  contLineCache.get(depth) ??
+  (contLineCache.set(depth, Decoration.line({ class: 'cm-lp-li', attributes: { style: `--li-pad: ${depth * LIST_STEP + LIST_SLOT}em` } })), contLineCache.get(depth)!);
+const listDepth = (item: SyntaxNode) => {
+  let depth = 0;
+  let quoted = false;
+  for (let p = item.parent; p; p = p.parent) {
+    if (p.name === 'ListItem') depth++;
+    if (p.name === 'Blockquote') quoted = true;
+  }
+  return { depth, quoted };
+};
 const rule = Decoration.replace({ widget: new RuleWidget() });
 const hide = Decoration.replace({});
 const markCache = new Map<string, Decoration>();
@@ -148,6 +207,19 @@ function buildLive(view: EditorView, hideSources: boolean): DecorationSet {
   const hideMark = (from: number, to: number) => {
     const after = to < doc.length && doc.sliceString(to, to + 1) === ' ' ? to + 1 : to;
     if (after > from) out.push(hide.range(from, after));
+  };
+  // A list item's text block (paragraph or task): lines other than the marker's line go under the item's text.
+  const underItem = (block: SyntaxNode) => {
+    const item = block.parent;
+    if (item?.name !== 'ListItem') return;
+    const { depth, quoted } = listDepth(item);
+    const markLine = doc.lineAt(item.from).number;
+    for (let l = Math.max(doc.lineAt(block.from).number, markLine + 1), last = doc.lineAt(block.to).number; l <= last; l++) {
+      const line = doc.line(l);
+      out.push(contLine(depth).range(line.from));
+      const ws = /^[ \t]+/.exec(line.text);
+      if (!quoted && ws && ws[0].length < line.length) out.push(hide.range(line.from, line.from + ws[0].length));
+    }
   };
   const { from: vFrom, to: vTo } = view.viewport;
 
@@ -262,20 +334,34 @@ function buildLive(view: EditorView, hideSources: boolean): DecorationSet {
           return false;
         case 'ListMark': {
           const item = node.node.parent;
-          const list = item?.parent?.name;
-          const task = item?.getChild('Task');
+          if (!item) return;
+          const list = item.parent?.name;
+          const task = item.getChild('Task');
           const taskMark = task?.getChild('TaskMarker');
-          if (taskMark) {
+          const markEnd = taskMark ? taskMark.to : to;
+          const line = doc.lineAt(from);
+          const { depth, quoted } = listDepth(item);
+          // The text starts after the marker and its spaces.
+          let text = markEnd;
+          while (text < line.to && /[ \t]/.test(doc.sliceString(text, text + 1))) text++;
+          const raw = touches(from, markEnd);
+          out.push(listLine(depth).range(line.from));
+          // Source indentation is replaced by the layout (inside a quote it stays: the quote mark owns that space).
+          if (!quoted && from > line.from && /^[ \t]+$/.test(doc.sliceString(line.from, from))) out.push(hide.range(line.from, from));
+          const end = text;
+          if (raw) out.push(mark('cm-lp-dim cm-lp-mk-raw').range(from, end));
+          else if (taskMark) {
             const checked = /x/i.test(doc.sliceString(taskMark.from, taskMark.to));
-            const widget = Decoration.replace({ widget: new CheckWidget(checked, taskMark.from) });
-            if (!touches(from, taskMark.to)) out.push(widget.range(from, taskMark.to));
-            else out.push(mark('cm-lp-dim').range(from, to));
-          } else if (list === 'BulletList') {
-            if (!touches(from, to)) out.push(bullet.range(from, to));
-          } else out.push(mark('cm-lp-olmark').range(from, to));
+            out.push(Decoration.replace({ widget: new CheckWidget(checked, taskMark.from) }).range(from, end));
+          } else if (list === 'BulletList') out.push(Decoration.replace({ widget: new BulletWidget(depth) }).range(from, end));
+          else out.push(Decoration.replace({ widget: new NumberWidget(doc.sliceString(from, to)) }).range(from, end));
           return;
         }
+        case 'Paragraph':
+          underItem(node.node);
+          return;
         case 'Task': {
+          underItem(node.node);
           const marker = node.node.getChild('TaskMarker');
           if (marker && /x/i.test(doc.sliceString(marker.from, marker.to))) {
             const end = doc.lineAt(marker.to).to;
