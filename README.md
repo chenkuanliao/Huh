@@ -2,7 +2,7 @@
 
 **A self-hosted meeting notebook.** Take notes during a meeting, record from your laptop or phone, get a private transcript made on your own GPU, and turn your notes plus the transcript into clean AI notes. Every claim links back to what was said.
 
-![Huh home: this week at a glance, folders, recent meetings and open to-dos](docs/images/dashboard.png)
+![Huh home: what's next today, this week's stats, a day/week/month calendar of meetings and recently edited notes](docs/images/dashboard.png)
 
 ## Quick start
 
@@ -19,13 +19,19 @@ You need Docker with Compose v2. An NVIDIA GPU makes transcription fast, but it'
 
 ### Notes first
 
-Write Markdown that formats as you type: headings, bold, lists and checkboxes look finished while the raw syntax shows only on the line you're editing. There are also note templates, Tab/Shift+Tab indentation and a distraction-free focus mode.
+Write Markdown that formats as you type: headings, bold, lists and checkboxes look finished while the raw syntax shows only on the line you're editing. Bullets, numbers and to-dos line up on one grid, and wrapped or nested lines hang neatly under their item. There are also note templates, Tab/Shift+Tab indentation and a distraction-free focus mode.
 
-![Typing a heading, a bullet and a checklist item in the live editor, then ticking it](docs/images/notes.gif)
+![Typing a heading, a nested bullet list and a checklist item in the live editor, then ticking it](docs/images/notes.gif)
+
+### Meetings on a calendar
+
+Every meeting has a date, start time and length. Click the date line at the top of a meeting to change them: pick a day, a 15-minute slot or type a time like "2:30pm", and set the length. Future meetings are tagged **Upcoming**, and Home shows them in a **Day / Week / Month** calendar along with what's next today. Times follow the time zone you choose in Settings.
+
+<p align="center"><img src="docs/images/meeting-time.png" alt="The meeting time picker: a month calendar, start times and length buttons" width="640"></p>
 
 ### Record from any device
 
-Start and stop from one device and record on another, for example your phone in the middle of the table. You can switch microphones mid-recording, add backup devices, and uploads resume if the network drops. You can also import a recording or a Voice Memo afterwards.
+Start and stop from one device and record on another, for example your phone in the middle of the table. You can switch microphones mid-recording, add backup devices, and uploads resume if the network drops. Huh remembers your microphone, so an iPhone used as a Mac mic (Continuity) is picked up again as soon as it connects. You can also import a recording or a Voice Memo afterwards.
 
 ![A meeting while recording, with the recorder bar at the bottom](docs/images/recording.png)
 
@@ -68,11 +74,13 @@ Huh is also an [MCP](https://modelcontextprotocol.io) server, so Claude Code, Co
    claude mcp add --transport http --scope user huh https://<your-huh-address>/mcp --header "Authorization: Bearer huh_…"
    ```
 
+<p align="center"><img src="docs/images/agents.png" alt="Settings → Agents: the MCP server address, a box to create a token, and three agent tokens with when each was last used" width="760"></p>
+
 Agents get read-only tools: `search_meetings`, `list_meetings`, `get_meeting` (your notes and AI notes), `get_transcript` (paged), `list_folders` and `list_todos`. They can't change anything. Each token can be revoked on the same page, which also shows when each token was last used. Reach the server the same way your other devices do (for example over Tailscale), since Huh only listens on this computer by default.
 
 ### And also
 
-- **Dashboard:** this week at a glance, recent meetings and every open to-do across meetings.
+- **Home:** what's next today, this week's numbers, the meeting calendar, recently edited meetings and every open to-do across meetings.
 - **Folders and archive** to keep things tidy.
 - **Glossary** per meeting, so the AI spells names and jargon right.
 
