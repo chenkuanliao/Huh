@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AudioLines,
+  Bot,
   Check,
   CircleCheck,
   Cpu,
@@ -24,6 +25,7 @@ import { api, ChatGPTStatus, errorText, send, Settings as SettingsT, SttModels, 
 import { OUTPUT_LANGUAGES, PROVIDERS, ProviderInfo, providerInfo, STT_MODELS } from './providers';
 import { Badge, Callout, cx, Field, Segmented, Select, Spinner, Switch, useToast } from './ui';
 import Templates from './Templates';
+import AgentSettings from './Agents';
 import { TimeZonePanel } from './TimeZone';
 import { GlossaryPanel } from './Glossary';
 import { activeIndex, AIEntry, entryProblem, moveEntry, sameEntry, setProviderModel } from './aiOrder';
@@ -128,6 +130,7 @@ export default function Settings({
           {settings && section === 'transcription' && <TranscriptionSettings settings={settings} save={save} />}
           {section === 'templates' && <Templates templates={templates} reload={reloadTemplates} />}
           {settings && section === 'notes' && <NotesSettings settings={settings} save={save} />}
+          {section === 'agents' && <AgentSettings />}
         </div>
       </div>
     </div>
@@ -139,6 +142,7 @@ const SECTION_ICONS: Record<SettingsSection, (size: number) => React.ReactNode> 
   transcription: size => <AudioLines size={size} />,
   templates: size => <LayoutTemplate size={size} />,
   notes: size => <NotebookPen size={size} />,
+  agents: size => <Bot size={size} />,
 };
 
 const NAV: { id: SettingsSection; hint: string }[] = [
@@ -146,6 +150,7 @@ const NAV: { id: SettingsSection; hint: string }[] = [
   { id: 'transcription', hint: 'Local speech model' },
   { id: 'templates', hint: 'Notes & AI formats' },
   { id: 'notes', hint: 'Editor, Back button, shortcuts' },
+  { id: 'agents', hint: 'MCP access for AI agents' },
 ];
 
 function Mark({ text, query }: { text: string; query: string }) {

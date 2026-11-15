@@ -1,4 +1,4 @@
-import asyncio, contextlib, hashlib, os, re, secrets, shutil
+import asyncio, contextlib, hashlib, json, os, re, secrets, shutil
 from pathlib import Path
 from uuid import UUID
 from urllib.parse import urlsplit
@@ -13,7 +13,7 @@ from argon2.exceptions import VerifyMismatchError, InvalidHashError
 from .db import *
 from .services import *
 from .security import encrypt, decrypt, digest
-from . import oauth, providers
+from . import oauth, providers, mcp_server
 from .model_cache import downloaded
 
 ph = PasswordHasher()
@@ -67,6 +67,22 @@ def auth(s, request):
     token = request.cookies.get(COOKIE, "")
     v = getkv(s, "session:" + digest(token)) if token else {}
     return bool(v.get("expires", 0) > now())
+
+
+AGENT_TOKEN_PREFIX = "huh_"
+AGENT_TOKENS_MAX = 50
+
+
+def agent(s, request):
+    """The agent token (Settings → Agents) sent as `Authorization: Bearer huh_…`, if it is valid."""
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    token = token.strip()
+    if scheme.lower() != "bearer" or not token.startswith(AGENT_TOKEN_PREFIX) or len(token) > 200:
+        return None
+    t = s.scalar(select(AgentToken).where(AgentToken.digest == digest(token)))
+    if t and (t.last_used_at or 0) < now() - 60:
+        t.last_used_at = now()
+    return t
 
 
 def session(s, response):
@@ -211,7 +227,11 @@ async def provider_error(request, exc):
 
 @app.middleware("http")
 async def protect(request, call_next):
-    if request.url.path.startswith("/api"):
+    if request.url.path == "/mcp" or request.url.path.startswith("/mcp/"):
+        denied = await guard_mcp(request)
+        if denied:
+            return denied
+    elif request.url.path.startswith("/api"):
         if request.method not in ["GET", "HEAD", "OPTIONS"]:
             origin = request.headers.get("origin")
             allowed = {str(request.base_url).rstrip("/")} | set(
@@ -253,9 +273,34 @@ async def protect(request, call_next):
     ):
         response = await with_etag(request, response)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    if request.url.path.startswith("/api"):
+    if request.url.path.startswith(("/api", "/mcp")):
         response.headers["Cache-Control"] = "no-store"
     return response
+
+
+async def guard_mcp(request):
+    """Agents reach /mcp with a bearer agent token only; the browser session cookie doesn't count."""
+    origin = request.headers.get("origin")
+    allowed = {str(request.base_url).rstrip("/")} | set(filter(None, os.getenv("ALLOWED_ORIGINS", "").split(",")))
+    # Browsers always send Origin; agents don't. Refusing foreign origins blocks DNS-rebinding pages.
+    if origin and origin not in allowed:
+        return JSONResponse({"detail": "Cross-origin request denied"}, status_code=403)
+    body = bytearray()
+    async for part in request.stream():
+        body.extend(part)
+        if len(body) > 1024 * 1024:
+            return JSONResponse({"detail": "Request exceeds 1 MiB"}, status_code=413)
+    request._body = bytes(body)
+    with tx() as s:
+        t = agent(s, request)
+        if t:
+            request.state.agent_token = t.id
+            return None
+    return JSONResponse(
+        {"detail": "Agent token required: create one in Huh → Settings → Agents and send it as Authorization: Bearer <token>"},
+        status_code=401,
+        headers={"WWW-Authenticate": 'Bearer realm="huh"'},
+    )
 
 
 async def with_etag(request, response):
@@ -370,15 +415,6 @@ def list_meetings():
         ]
 
 
-def snippet(text, q, width=70):
-    i = text.lower().find(q.lower())
-    if i < 0:
-        return text[: width * 2].strip()
-    start = max(0, i - width)
-    end = min(len(text), i + len(q) + width)
-    return ("…" if start else "") + " ".join(text[start:end].split()) + ("…" if end < len(text) else "")
-
-
 @app.get("/api/search")
 def search(q: str = ""):
     """Search titles, notes, AI notes and transcripts across every meeting.
@@ -389,37 +425,8 @@ def search(q: str = ""):
         return {"results": []}
     if len(q) > 200:
         fail("Search is too long", 422)
-    pattern = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-    like = lambda col: col.ilike(pattern, escape="\\")
-    results = []
     with tx() as s:
-        for m in s.scalars(
-            select(Meeting)
-            .where(like(Meeting.title) | like(Meeting.notes) | like(Meeting.enhanced_notes))
-            .order_by(Meeting.archived, Meeting.updated_at.desc())
-            .limit(30)
-        ):
-            for field, text in [("title", m.title), ("notes", m.notes), ("enhanced", m.enhanced_notes)]:
-                if q.lower() in (text or "").lower():
-                    results.append(dict(meeting_id=m.id, title=m.title, field=field, snippet=snippet(text, q),
-                                        updated_at=public(m)["updated_at"], archived=m.archived))
-        rows = s.execute(
-            select(Segment, Recording, Meeting)
-            .join(Recording, Segment.recording_id == Recording.id)
-            .join(Meeting, Recording.meeting_id == Meeting.id)
-            .where(like(Segment.text), Recording.excluded == False)
-            .order_by(Meeting.archived, Meeting.updated_at.desc(), Segment.start)
-            .limit(60)
-        ).all()
-        for seg, r, m in rows:
-            results.append(
-                dict(meeting_id=m.id, title=m.title, field="transcript", snippet=snippet(seg.text, q),
-                     recording_id=r.id, start=seg.start, segment_id=seg.id, updated_at=public(m)["updated_at"],
-                     archived=m.archived)
-            )
-    # Stable sort: active meetings first, archived last, otherwise keep the order above.
-    results.sort(key=lambda r: r["archived"])
-    return {"results": results}
+        return {"results": search_notebook(s, q)}
 
 
 @app.get("/api/dashboard")
@@ -1322,12 +1329,84 @@ def signout():
     return oauth.signout()
 
 
+def public_token(t):
+    return {
+        "id": t.id,
+        "name": t.name,
+        "hint": t.hint,
+        "created_at": iso(t.created_at),
+        "last_used_at": iso(t.last_used_at) if t.last_used_at else None,
+    }
+
+
+@app.get("/api/agent-tokens")
+def list_agent_tokens():
+    with tx() as s:
+        return [public_token(t) for t in s.scalars(select(AgentToken).order_by(AgentToken.created_at.desc()))]
+
+
+@app.post("/api/agent-tokens")
+def create_agent_token(body: dict):
+    """Makes a token for an AI agent to read the notebook over MCP. The token is only ever returned here."""
+    name = " ".join(string(body.get("name", ""), "name", 100).split())
+    if not name:
+        fail("Give the token a name, like the agent or computer that will use it", 422)
+    with tx() as s:
+        from sqlalchemy import func
+
+        if s.scalar(select(func.count(AgentToken.id))) >= AGENT_TOKENS_MAX:
+            fail(f"You can have at most {AGENT_TOKENS_MAX} agent tokens; revoke one first", 422)
+        token = AGENT_TOKEN_PREFIX + secrets.token_urlsafe(32)
+        t = AgentToken(name=name, digest=digest(token), hint=token[: len(AGENT_TOKEN_PREFIX) + 4])
+        s.add(t)
+        s.flush()
+        return public_token(t) | {"token": token}
+
+
+@app.delete("/api/agent-tokens/{tid}")
+def revoke_agent_token(tid: str):
+    with tx() as s:
+        s.delete(require(s, AgentToken, tid))
+    return {"ok": True}
+
+
+@app.post("/mcp")
+async def mcp(request: Request):
+    """Model Context Protocol, Streamable HTTP transport in its stateless form: every POST carries
+    JSON-RPC and gets a plain JSON answer (no SSE stream, no session). Read-only; see mcp_server."""
+    version = request.headers.get("mcp-protocol-version")
+    if version and version not in mcp_server.PROTOCOL_VERSIONS:
+        return JSONResponse({"detail": f"Unsupported MCP protocol version {version}"}, status_code=400)
+    try:
+        message = json.loads(await request.body())
+    except (ValueError, UnicodeDecodeError):
+        return JSONResponse(
+            {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}, status_code=400
+        )
+    if isinstance(message, list):
+        if not message:
+            return JSONResponse(
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Empty batch"}}, status_code=400
+            )
+        replies = [r for r in [await asyncio.to_thread(mcp_server.handle, m) for m in message[:50]] if r]
+        return JSONResponse(replies) if replies else Response(status_code=202)
+    reply = await asyncio.to_thread(mcp_server.handle, message)
+    return JSONResponse(reply) if reply else Response(status_code=202)
+
+
+@app.api_route("/mcp", methods=["GET", "DELETE"])
+def mcp_other():
+    # No server-to-client stream and no sessions to end.
+    return Response(status_code=405, headers={"Allow": "POST"})
+
+
 STATIC_ROOT = Path("/app/static")
 
 
 @app.get("/{path:path}")
 def spa(path: str):
-    if path == "api" or path.startswith("api/"):
+    # Unknown API paths, and OAuth discovery (/.well-known/…) that MCP clients probe, must not get the app's HTML.
+    if path in ("api", "mcp") or path.startswith(("api/", "mcp/", ".well-known/")):
         fail("Not found", 404)
     root = STATIC_ROOT
     target = (root / path).resolve()

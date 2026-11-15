@@ -519,3 +519,48 @@ def acknowledge(s, r):
     )
     m.state = state
     m.status = "recording"
+
+
+def snippet(text, q, width=70):
+    i = text.lower().find(q.lower())
+    if i < 0:
+        return text[: width * 2].strip()
+    start = max(0, i - width)
+    end = min(len(text), i + len(q) + width)
+    return ("…" if start else "") + " ".join(text[start:end].split()) + ("…" if end < len(text) else "")
+
+
+def search_notebook(s, q):
+    """Search titles, notes, AI notes and transcripts across every meeting (case-insensitive phrase).
+
+    Archived meetings are still searchable, but always rank after everything else."""
+    pattern = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    like = lambda col: col.ilike(pattern, escape="\\")
+    results = []
+    for m in s.scalars(
+        select(Meeting)
+        .where(like(Meeting.title) | like(Meeting.notes) | like(Meeting.enhanced_notes))
+        .order_by(Meeting.archived, Meeting.updated_at.desc())
+        .limit(30)
+    ):
+        for field, text in [("title", m.title), ("notes", m.notes), ("enhanced", m.enhanced_notes)]:
+            if q.lower() in (text or "").lower():
+                results.append(dict(meeting_id=m.id, title=m.title, field=field, snippet=snippet(text, q),
+                                    updated_at=public(m)["updated_at"], archived=m.archived))
+    rows = s.execute(
+        select(Segment, Recording, Meeting)
+        .join(Recording, Segment.recording_id == Recording.id)
+        .join(Meeting, Recording.meeting_id == Meeting.id)
+        .where(like(Segment.text), Recording.excluded == False)
+        .order_by(Meeting.archived, Meeting.updated_at.desc(), Segment.start)
+        .limit(60)
+    ).all()
+    for seg, r, m in rows:
+        results.append(
+            dict(meeting_id=m.id, title=m.title, field="transcript", snippet=snippet(seg.text, q),
+                 recording_id=r.id, start=seg.start, segment_id=seg.id, updated_at=public(m)["updated_at"],
+                 archived=m.archived)
+        )
+    # Stable sort: active meetings first, archived last, otherwise keep the order above.
+    results.sort(key=lambda r: r["archived"])
+    return results
