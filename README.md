@@ -57,6 +57,19 @@ On a phone, Huh becomes a simple list of meetings, your to-dos, a **Record** but
 
 <p align="center"><img src="docs/images/phone.png" alt="Huh on a phone: the meeting list and a meeting's AI notes" width="560"></p>
 
+### Ask your agents about your meetings (MCP)
+
+Huh is also an [MCP](https://modelcontextprotocol.io) server, so Claude Code, Codex, OpenCode or any other MCP client can search and read your meetings while they work: "what did we decide about the cluster migration?", "list my open to-dos from the Research folder".
+
+1. In **Settings → Agents**, name a token (for example *Work laptop · Claude Code*) and click **Create token**.
+2. Copy the setup line for your agent. For Claude Code:
+
+   ```bash
+   claude mcp add --transport http --scope user huh https://<your-huh-address>/mcp --header "Authorization: Bearer huh_…"
+   ```
+
+Agents get read-only tools: `search_meetings`, `list_meetings`, `get_meeting` (your notes and AI notes), `get_transcript` (paged), `list_folders` and `list_todos`. They can't change anything. Each token can be revoked on the same page, which also shows when each token was last used. Reach the server the same way your other devices do (for example over Tailscale), since Huh only listens on this computer by default.
+
 ### And also
 
 - **Dashboard:** this week at a glance, recent meetings and every open to-do across meetings.
@@ -147,6 +160,7 @@ For a local model server (Ollama, LM Studio, vLLM…) choose **Custom / local** 
 - Docker volumes hold the database, audio and encrypted credentials (`data`), and speech models (`models`). `docker compose down` keeps them; `down -v` deletes them. Back up the database and data volumes together.
 - Audio and transcripts stay on your server. Only the text sent for AI notes goes to the provider you choose (nothing does if you use a local model).
 - API keys and ChatGPT tokens are encrypted at rest and never sent to browsers.
+- Agent tokens (Settings → Agents) are stored only as hashes and are shown once. They open `/mcp` read-only and nothing else. Anything an agent reads is sent to that agent's AI provider, and meeting text is untrusted input to the agent.
 - Deleting a meeting removes its notes, AI notes and history, recordings, transcript, and the matching data on the device you delete from. A background sweep removes anything left unreachable after crashes.
 
 Useful commands:

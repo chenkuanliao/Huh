@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Archive, ArchiveRestore, ArrowLeft, AudioLines, BookA, BookOpen, Check, ChevronRight, Download, FileAudio, FileText, FolderOpen, History, LayoutDashboard, LayoutTemplate, Ellipsis, ExternalLink, FolderInput, FolderPlus, Lock, Maximize2, Mic, NotebookPen, PanelLeftClose, PanelLeftOpen, Palette, Pencil, Plus, Search, Settings as SettingsIcon, Smartphone, Sparkles, TextSearch, Trash2, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowLeft, AudioLines, BookA, Bot, BookOpen, Check, ChevronRight, Download, FileAudio, FileText, FolderOpen, History, LayoutDashboard, LayoutTemplate, Ellipsis, ExternalLink, FolderInput, FolderPlus, Lock, Maximize2, Mic, NotebookPen, PanelLeftClose, PanelLeftOpen, Palette, Pencil, Plus, Search, Settings as SettingsIcon, Smartphone, Sparkles, TextSearch, Trash2, X } from 'lucide-react';
 import { api, ApiError, errorText, Folder, forget, GlossaryEntry, Meeting, prefetch, send, Settings as SettingsT, Template } from './api';
 import { GlossaryDialog, GlossaryLayer, mergeGlossaries } from './Glossary';
 import Recorder from './Recorder';
@@ -911,6 +911,7 @@ function App() {
         ['transcription', 'Transcription', 'Local speech model, language and device', <AudioLines size={16} />, ['speech', 'whisper', 'stt', 'gpu', 'cuda', 'language']],
         ['templates', 'Templates', 'Formats for notes and AI notes', <LayoutTemplate size={16} />, ['format', 'manage templates']],
         ['notes', 'Notes & navigation', 'Editor, Back button, shortcuts', <NotebookPen size={16} />, ['editor', 'back button', 'keyboard', 'shortcuts', 'write', 'preview']],
+        ['agents', 'Agents', 'MCP access for Claude Code, Codex and other agents', <Bot size={16} />, ['mcp', 'agent', 'claude code', 'codex', 'opencode', 'token', 'api']],
       ] as [SettingsSection, string, string, React.ReactNode, string[]][]
     ).map(([id, title, hint, icon, keywords]) => ({ id: `settings-${id}`, kind: 'setting', title, subtitle: `Settings · ${hint}`, keywords: ['settings', 'preferences', ...keywords], icon, run: () => openSettings(id) }));
 

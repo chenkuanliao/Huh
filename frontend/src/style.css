@@ -8447,3 +8447,88 @@ body.phone .when-head .when-tz,
 body.phone .when-zone {
   display: none;
 }
+
+/* ============================================================ agents (MCP) settings */
+.agent-label {
+  font-size: 13px;
+}
+.agent-code pre {
+  margin: 0;
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 10px 84px 10px 12px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agent-code pre code {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+.agent-code .code-copy {
+  opacity: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.agent-create input {
+  min-width: 0;
+}
+.agent-fresh {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.agent-fresh .segmented {
+  align-self: flex-start;
+}
+.agent-done {
+  align-self: flex-start;
+}
+.agent-tokens {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.agent-tokens li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.agent-tokens li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.agent-token-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.agent-token-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.agent-token-text strong {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 560px) {
+  .agent-create {
+    flex-wrap: wrap;
+  }
+  .agent-create button {
+    width: 100%;
+    justify-content: center;
+  }
+}

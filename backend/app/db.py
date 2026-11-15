@@ -192,6 +192,21 @@ class Generation(Base):
     output_language: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class AgentToken(Base):
+    """A personal access token that lets an AI agent read the notebook over MCP (/mcp).
+
+    Only a SHA-256 digest of the token is kept; the token itself is shown once, when it is made."""
+
+    __tablename__ = "agent_tokens"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String)
+    digest: Mapped[str] = mapped_column(String, unique=True, index=True)
+    # The first characters of the token, so the owner can tell tokens apart ("huh_ab12…").
+    hint: Mapped[str] = mapped_column(String)
+    created_at: Mapped[float] = mapped_column(Float, default=now)
+    last_used_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
 def init():
     with engine.begin() as c:
         # API and worker may start together on a fresh database.

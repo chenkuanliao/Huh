@@ -1,12 +1,13 @@
 /** Everything on the Settings page that search can find. */
 
-export type SettingsSection = 'ai' | 'transcription' | 'templates' | 'notes';
+export type SettingsSection = 'ai' | 'transcription' | 'templates' | 'notes' | 'agents';
 
 export const SECTION_LABELS: Record<SettingsSection, string> = {
   ai: 'AI notes',
   transcription: 'Transcription',
   templates: 'Templates',
   notes: 'Notes & navigation',
+  agents: 'Agents',
 };
 
 export type SettingEntry = {
@@ -20,6 +21,21 @@ export type SettingEntry = {
 };
 
 export const SETTINGS_INDEX: SettingEntry[] = [
+  // Agents
+  {
+    id: 'agents-connect',
+    section: 'agents',
+    title: 'Connect an agent (MCP)',
+    description: 'Let Claude Code, Codex, OpenCode or another MCP client search and read your meetings.',
+    keywords: 'mcp model context protocol server agent agents claude code codex opencode cursor api access token bearer integration connect chat ask questions knowledge read only',
+  },
+  {
+    id: 'agents-tokens',
+    section: 'agents',
+    title: 'Agent tokens',
+    description: 'See which agents can read your notebook, when they last did, and revoke access.',
+    keywords: 'mcp token tokens api key access revoke remove delete security last used agents',
+  },
   // AI notes
   {
     id: 'ai-order',
