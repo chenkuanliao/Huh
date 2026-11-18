@@ -1465,3 +1465,26 @@ def test_meeting_time_backfilled_for_older_meetings(client):
     init()
     got = client.get(f"/api/meetings/{m['id']}").json()
     assert got["starts_at"] == got["created_at"] and got["duration_minutes"] == 60
+
+
+def test_standby_device_can_be_started_remotely(client):
+    """A Mac with its mic off but permission granted can be started from the phone."""
+    mid = meeting(client)
+    mac = str(uuid.uuid4())
+    hb = {"id": mac, "name": "Mac", "meeting_id": mid, "ready": False, "backup_enabled": False}
+    assert client.post("/api/devices/heartbeat", json=hb).status_code == 200
+    control = lambda: client.post(f"/api/meetings/{mid}/recording-control", json={"action": "start", "device_id": mac})
+    assert control().status_code == 409
+    hb["standby"] = True
+    listed = client.post("/api/devices/heartbeat", json=hb).json()["device"]
+    assert listed["standby"] is True and listed["ready"] is False
+    assert client.get(f"/api/meetings/{mid}/devices").json()[0]["standby"] is True
+    assert control().status_code == 200
+    cmd = command(client, hb)
+    assert cmd["type"] == "start" and cmd["token"]
+    # The Mac opens its mic on demand, then confirms the capture as usual.
+    hb.update(ready=True, recording_id=cmd["recording_id"], capture_state="recording")
+    client.post("/api/devices/heartbeat", json=hb)
+    assert client.post(f"/api/recordings/{cmd['recording_id']}/started", json={"token": cmd["token"]}).status_code == 200
+    assert client.get(f"/api/meetings/{mid}/recording-state").json()["active_device_id"] == mac
+    assert client.post("/api/devices/heartbeat", json=hb | {"standby": "yes"}).status_code == 422

@@ -134,6 +134,8 @@ export type Device = {
   id: string;
   name: string;
   ready: boolean;
+  /** Mic is off, but the device opens it when told to record (a computer with mic permission granted). */
+  standby?: boolean;
   online: boolean;
   backup_enabled: boolean;
   meeting_id: string;

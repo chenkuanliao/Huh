@@ -30,6 +30,20 @@ const isMobile = isIOS || /Android/.test(navigator.userAgent);
 // Desktop browsers record through a Web Audio graph so the microphone can be swapped mid-recording.
 const canUseGraph = !isIOS && typeof window !== 'undefined' && 'AudioContext' in window;
 
+/** AudioContext.resume() never settles without a user gesture (e.g. a start sent from the phone). */
+const resumeCtx = (ctx: AudioContext) => Promise.race([ctx.resume().catch(() => {}), new Promise(r => setTimeout(r, 400))]);
+
+/** A device another one can start recording on: mic already on, or able to open it on demand. */
+export const canRecord = (d: Device) => d.online && (d.ready || !!d.standby);
+
+/** Tells the phone's top bar where Record will record, and where a recording is running. */
+export type RecTarget = { target: string | null; active: string | null };
+export let lastRecTarget: RecTarget = { target: null, active: null };
+const announceTarget = (detail: RecTarget) => {
+  lastRecTarget = detail;
+  window.dispatchEvent(new CustomEvent<RecTarget>('huh:rec-target', { detail }));
+};
+
 function guessDeviceName() {
   const ua = navigator.userAgent;
   if (/iPhone/.test(ua)) return 'iPhone';
@@ -143,6 +157,8 @@ export default function Recorder({
     return stored && stored !== 'This browser' ? stored : guessDeviceName();
   });
   const [backup, setBackup] = useState(() => localStorage.getItem('huh-backup') === '1');
+  // Computers: let another device (your phone) start recording here without turning the mic on first.
+  const [remoteStart, setRemoteStart] = useState(() => !isMobile && localStorage.getItem('huh-remote-start') !== '0');
   const [ready, setReady] = useState(false);
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
   const [mic, setMic] = useState(() => localStorage.getItem('huh-mic') || '');
@@ -176,8 +192,12 @@ export default function Recorder({
   const sourceChip = useRef<HTMLButtonElement>(null);
   const queueChip = useRef<HTMLButtonElement>(null);
   const tickRef = useRef<() => Promise<void>>(async () => {});
-  const latest = useRef({ meeting, backup, name, mic });
-  latest.current = { meeting, backup, name, mic };
+  // Mic opened only for a recording another device started; closed again when it ends.
+  const onDemand = useRef(false);
+  // When this device last asked to start, so a start sent from elsewhere can be announced.
+  const selfStart = useRef(0);
+  const latest = useRef({ meeting, backup, name, mic, standby: false });
+  latest.current = { meeting, backup, name, mic, standby: remoteStart && permission === 'granted' && !!navigator.mediaDevices?.getUserMedia };
   const changed = useRef(onChange);
   changed.current = onChange;
 
@@ -293,7 +313,7 @@ export default function Recorder({
       setActiveMicLabel(cleanLabel(track?.label || ''));
       activeMicRef.current = id && !fellBack ? id : track?.getSettings().deviceId || '';
       if (g) {
-        if (g.ctx.state !== 'running') await g.ctx.resume().catch(() => {});
+        if (g.ctx.state !== 'running') await resumeCtx(g.ctx);
         const node = g.ctx.createMediaStreamSource(s);
         node.connect(g.dest);
         node.connect(g.analyser);
@@ -335,6 +355,12 @@ export default function Recorder({
     setReadyBoth(false);
     toast(`${label} disconnected.`, 'error');
     if (c && c.rec.state !== 'inactive') c.rec.stop();
+  }
+
+  function closeOnDemandMic() {
+    if (!onDemand.current) return;
+    onDemand.current = false;
+    micOff();
   }
 
   function micOff() {
@@ -410,13 +436,20 @@ export default function Recorder({
       if (capture.current.p.id === cmd.recording_id && !capture.current.acked) await acknowledge(capture.current);
       return;
     }
-    if (!readyRef.current || !stream.current?.getAudioTracks().some(t => t.readyState === 'live')) throw Error('Turn on the microphone on this device first.');
+    const live = () => readyRef.current && !!stream.current?.getAudioTracks().some(t => t.readyState === 'live');
+    let opened = false;
+    if (!live() && latest.current.standby) {
+      // Started from another device: open the mic now (permission was granted before).
+      if (!(await prepare(latest.current.mic, true))) throw Error('Another device asked this one to record, but the microphone couldn’t be opened.');
+      opened = true;
+    }
+    if (!live()) throw Error('Turn on the microphone on this device first.');
     if (!window.MediaRecorder) throw Error('This browser cannot record audio.');
-    let recordStream = stream.current;
+    let recordStream: MediaStream = stream.current!;
     let viaGraph = false;
     const g = graph.current;
     if (g) {
-      if (g.ctx.state !== 'running') await g.ctx.resume().catch(() => {});
+      if (g.ctx.state !== 'running') await resumeCtx(g.ctx);
       if (g.ctx.state === 'running' && g.source) {
         recordStream = g.dest.stream;
         viaGraph = true;
@@ -428,6 +461,7 @@ export default function Recorder({
     await saveSession(p);
     const c: Capture = { rec, p, start: Date.now(), pausedMs: 0, chain: Promise.resolve(), acked: false, viaGraph };
     capture.current = c;
+    onDemand.current = opened;
     rec.ondataavailable = e => {
       if (!e.data.size || c.discard) return;
       c.chain = c.chain
@@ -461,6 +495,7 @@ export default function Recorder({
         .then(async () => {
           if (c.discard) {
             if (capture.current === c) capture.current = null;
+            closeOnDemandMic();
             await forget(p.id).catch(() => {});
             await wake.current?.release();
             wake.current = null;
@@ -469,6 +504,7 @@ export default function Recorder({
           }
           if (c.storageFailed) {
             capture.current = null;
+            closeOnDemandMic();
             await wake.current?.release();
             wake.current = null;
             await refreshQueue();
@@ -481,6 +517,7 @@ export default function Recorder({
             await drain(p);
           } catch {}
           if (capture.current === c) capture.current = null;
+          closeOnDemandMic();
           await wake.current?.release();
           wake.current = null;
           await refreshQueue();
@@ -502,6 +539,7 @@ export default function Recorder({
     });
     setCapturing(true);
     setSilent(false);
+    if (Date.now() - selfStart.current > 20000) toast(`Recording on this ${latest.current.name} — started from another device.`, 'success');
     try {
       if ('wakeLock' in navigator) wake.current = await (navigator as any).wakeLock.request('screen');
     } catch {
@@ -528,6 +566,7 @@ export default function Recorder({
             name: l.name,
             meeting_id: c?.p.meeting || l.meeting,
             ready: readyRef.current && !!stream.current?.getAudioTracks().some(t => t.readyState === 'live'),
+            standby: l.standby,
             recording_id: c?.p.id || null,
             backup_enabled: l.backup,
             capture_state: c?.rec.state || 'idle',
@@ -659,7 +698,7 @@ export default function Recorder({
     await api('/devices/heartbeat', {
       method: 'POST',
       signal: AbortSignal.timeout(3000),
-      body: JSON.stringify({ id: deviceId, name, meeting_id: capture.current?.p.meeting || meeting, ready: readyRef.current, recording_id: capture.current?.p.id || null, backup_enabled: backup, capture_state: capture.current?.rec.state || 'idle' }),
+      body: JSON.stringify({ id: deviceId, name, meeting_id: capture.current?.p.meeting || meeting, ready: readyRef.current, standby: latest.current.standby, recording_id: capture.current?.p.id || null, backup_enabled: backup, capture_state: capture.current?.rec.state || 'idle' }),
     });
   }
 
@@ -667,6 +706,7 @@ export default function Recorder({
     const m = capture.current?.p.meeting || meeting;
     if (!m) return;
     setBusy(true);
+    if (action === 'start' || action === 'switch') selfStart.current = Date.now();
     try {
       if ((action === 'start' || action === 'switch') && (target || deviceId) === deviceId && !readyRef.current) {
         const ok = await prepare();
@@ -686,7 +726,8 @@ export default function Recorder({
     }
   }
 
-  controlRef.current = a => control(a);
+  // The phone's one-tap Record goes to the effective source (an open computer, when there is one).
+  controlRef.current = a => control(a, target);
 
   async function policy(order: string[], auto = state?.auto_fallback || false) {
     if (!meeting) return;
@@ -705,7 +746,11 @@ export default function Recorder({
   const activeId = state?.active_device_id;
   const pendingId = state?.pending_device_id;
   const others = devices.filter(d => d.id !== deviceId);
-  const target = source || deviceId;
+  // On a phone, Record goes to a computer that has this meeting open and can record (the Mac you're
+  // typing on), unless you picked a source yourself. Computers record on themselves by default.
+  const picked = source && (source === deviceId || others.some(d => d.id === source && canRecord(d))) ? source : '';
+  const auto = isMobile ? others.find(d => d.standby && d.online && !d.recording_id) : undefined;
+  const target = picked || auto?.id || deviceId;
   const targetDevice = target === deviceId ? null : devices.find(d => d.id === target);
   const activeDevice = activeId === deviceId ? null : devices.find(d => d.id === activeId);
   const isLive = !paused && status !== 'paused' && (status === 'recording' || status === 'switching' || capturing);
@@ -717,6 +762,8 @@ export default function Recorder({
     document.body.classList.toggle('rec-active', recActive);
     return () => document.body.classList.remove('rec-active');
   }, [recActive]);
+  const runningOn = !capturing && recActive ? devices.find(d => d.id === (activeId || pendingId))?.name || null : null;
+  useEffect(() => announceTarget({ target: targetDevice?.name || null, active: runningOn }), [targetDevice?.name, runningOn]);
 
   // The saved mic is not connected right now (e.g. macOS has not attached the iPhone yet).
   const micMissing = !!mic && permission === 'granted' && mics.length > 0 && !mics.some(m => m.deviceId === mic);
@@ -842,7 +889,7 @@ export default function Recorder({
         {controlling ? (
           liveActions()
         ) : meeting && (
-          <button type="button" className="record-button" disabled={busy || preparing || (targetDevice ? !targetDevice.ready || !targetDevice.online : false)} onClick={() => void control('start', target)}>
+          <button type="button" className="record-button" disabled={busy || preparing || (targetDevice ? !canRecord(targetDevice) : false)} onClick={() => void control('start', target)}>
             {busy || preparing ? <Spinner size={15} /> : <span className="rec-dot static" />} Start recording
           </button>
         )}
@@ -868,7 +915,7 @@ export default function Recorder({
           <div className="setup-section">
             <h3>Record from</h3>
             <div className={cx('source-row', target === deviceId && 'chosen')}>
-              <button type="button" role="radio" aria-checked={target === deviceId} className="source-pick" onClick={() => setSource('')} aria-label="Record from this device">
+              <button type="button" role="radio" aria-checked={target === deviceId} className="source-pick" onClick={() => setSource(deviceId)} aria-label="Record from this device">
                 <span className="radio-dot" />
               </button>
               <div className="source-main">
@@ -886,7 +933,7 @@ export default function Recorder({
                   />
                   <span className="muted small">this device</span>
                   <span className="spacer" />
-                  {paused ? <Badge tone="warn">Paused</Badge> : capturing ? <Badge tone="live">Recording</Badge> : ready ? <Badge tone="good">Mic on</Badge> : <Badge>Mic off</Badge>}
+                  {paused ? <Badge tone="warn">Paused</Badge> : capturing ? <Badge tone="live">Recording</Badge> : ready ? <Badge tone="good">Mic on</Badge> : latest.current.standby ? <Badge tone="good">Ready</Badge> : <Badge>Mic off</Badge>}
                 </div>
                 <div className="mic-row">
                   <Select
@@ -931,7 +978,7 @@ export default function Recorder({
             </div>
 
             {others.map(d => {
-              const usable = d.online && d.ready;
+              const usable = canRecord(d);
               return (
                 <div key={d.id} className={cx('source-row', target === d.id && 'chosen', !usable && 'unavailable')}>
                   <button type="button" role="radio" aria-checked={target === d.id} className="source-pick" disabled={!usable} onClick={() => setSource(d.id)} aria-label={`Record from ${d.name}`}>
@@ -942,12 +989,12 @@ export default function Recorder({
                       <DeviceIcon name={d.name} />
                       <strong className="truncate">{d.name || 'Unnamed device'}</strong>
                       <span className="spacer" />
-                      {d.id === activeId ? <Badge tone="live">Recording</Badge> : !d.online ? <Badge>Offline</Badge> : d.ready ? <Badge tone="good">Ready</Badge> : <Badge tone="warn">Mic off</Badge>}
+                      {d.id === activeId ? <Badge tone="live">Recording</Badge> : !d.online ? <Badge>Offline</Badge> : usable ? <Badge tone="good">Ready</Badge> : <Badge tone="warn">Mic off</Badge>}
                     </div>
                     {!d.online ? (
                       <p className="hint">Not connected. Open this meeting on that device.</p>
-                    ) : !d.ready ? (
-                      <p className="hint">Tap “Turn on microphone” on that device to make it available.</p>
+                    ) : !usable ? (
+                      <p className="hint">Turn on the microphone on that device to make it available.</p>
                     ) : isLive && d.id !== activeId ? (
                       <button type="button" className="ghost sm" disabled={busy} onClick={() => void control('switch', d.id)}>
                         Move recording here
@@ -957,9 +1004,29 @@ export default function Recorder({
                 </div>
               );
             })}
-            <p className="hint setup-tip">
-              <Smartphone size={13} /> To record with your phone, open this same meeting on it and turn on its microphone. It will show up here.
-            </p>
+            {!isMobile && (
+              <div className="remote-start">
+                <Switch
+                  checked={remoteStart}
+                  onChange={v => {
+                    setRemoteStart(v);
+                    localStorage.setItem('huh-remote-start', v ? '1' : '0');
+                    void tickRef.current();
+                  }}
+                  label="Let my phone start recording here"
+                  description={
+                    remoteStart && permission !== 'granted'
+                      ? 'Turn on the microphone here once (and allow it) so your phone can use it.'
+                      : 'Open this meeting on your phone and tap Record: it records with this computer’s microphone. The mic stays off until then.'
+                  }
+                />
+              </div>
+            )}
+            {!isMobile && (
+              <p className="hint setup-tip">
+                <Smartphone size={13} /> To record with your phone’s mic instead, open this same meeting on it and turn on its microphone. It will show up here.
+              </p>
+            )}
           </div>
 
           <details className="setup-section backup">
@@ -1105,6 +1172,11 @@ export default function Recorder({
             </button>
           ) : (
             <p className="muted rec-controls-meeting truncate">{recTitle}</p>
+          )}
+          {runningOn && (
+            <p className="rec-controls-where">
+              <DeviceIcon name={runningOn} size={15} /> on {runningOn}
+            </p>
           )}
           <div className="rec-controls-actions">{liveActions(() => setControlsOpen(false))}</div>
         </div>

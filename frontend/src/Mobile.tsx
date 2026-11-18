@@ -7,6 +7,7 @@ import { plain, relativeDay, TodoPanel, useDashData } from './Dashboard';
 import { daysAgo, fmt, fmtTime, meetingDate } from './time';
 import { FolderGlyph, FolderTile, folderVars } from './folders';
 import { cx, Modal, Spinner } from './ui';
+import { DeviceIcon, lastRecTarget, RecTarget } from './Recorder';
 
 /* ------------------------------------------------------------ detection */
 
@@ -179,6 +180,12 @@ export function PhoneTopBar({
   /** The open meeting's save state (its notes' editors), shown under the title. */
   save?: SaveState | null;
 }) {
+  const [rec, setRec] = useState<RecTarget>(lastRecTarget);
+  useEffect(() => {
+    const on = (e: Event) => setRec((e as CustomEvent<RecTarget>).detail);
+    window.addEventListener('huh:rec-target', on);
+    return () => window.removeEventListener('huh:rec-target', on);
+  }, []);
   return (
     <header className="phone-top">
       <button type="button" className="phone-back" onClick={onBack} aria-label={`Back to ${backLabel}`}>
@@ -196,13 +203,22 @@ export function PhoneTopBar({
       </span>
       {onRecord && (
         <>
-          <button type="button" className="phone-record" aria-label="Record" onClick={onRecord}>
-            <span className="rec-dot static" />
+          {/* Records on the open computer (its mic) when there is one: the laptop shows where. */}
+          <button type="button" className={cx('phone-record', rec.target && 'remote')} aria-label={rec.target ? `Record on ${rec.target}` : 'Record'} onClick={onRecord}>
+            {rec.target ? (
+              <span className="phone-record-device">
+                <DeviceIcon name={rec.target} size={17} />
+                <span className="rec-dot static" />
+              </span>
+            ) : (
+              <span className="rec-dot static" />
+            )}
             <span className="phone-record-label">Record</span>
           </button>
           {/* Recording controls (pause / finish) from anywhere, even while typing. */}
-          <button type="button" className="phone-rec-badge" aria-label="Recording controls" onPointerDown={e => e.preventDefault()} onClick={() => window.dispatchEvent(new Event('huh:recording-controls'))}>
+          <button type="button" className="phone-rec-badge" aria-label={rec.active ? `Recording on ${rec.active}: controls` : 'Recording controls'} onPointerDown={e => e.preventDefault()} onClick={() => window.dispatchEvent(new Event('huh:recording-controls'))}>
             <span className="rec-dot" /> REC
+            {rec.active && <DeviceIcon name={rec.active} size={15} />}
           </button>
         </>
       )}

@@ -33,9 +33,10 @@ Recording {id,meeting_id,device_id?,label,mime_type,status,created_at,duration?,
 
 ## Recording coordination (polling every 2 seconds, no WebSocket dependency)
 Devices are page sessions with stable sessionStorage device UUID (different tabs different IDs). Mic enumeration/permission occurs locally after explicit Enable microphone user action; only ready, explicitly armed devices eligible. UI retains local selected MediaDeviceInfo id, server only sees name. Microphone stream maintained while armed; audio capture only on commands. Mobile background capture is NOT guaranteed; display this honestly. Recorder component global (survives meeting route changes).
-- POST /devices/heartbeat {id,name,meeting_id?,ready:boolean,recording_id?:string|null,backup_enabled:boolean,capture_state?:string} -> {device:Device,command:Command|null}
+- POST /devices/heartbeat {id,name,meeting_id?,ready:boolean,standby?:boolean,recording_id?:string|null,backup_enabled:boolean,capture_state?:string} -> {device:Device,command:Command|null}
 - GET /meetings/{id}/devices -> Device[]
-Device {id,name,meeting_id,ready,online,backup_enabled,last_seen,recording_id?}
+Device {id,name,meeting_id,ready,standby,online,backup_enabled,last_seen,recording_id?}
+Standby (record from the phone with the computer's mic): a computer whose mic is off but whose microphone permission is already granted reports standby=true (Recording setup → "Let my phone start recording here", on by default). A standby device is eligible like a ready one; on a start command it opens its saved mic, records, and closes the mic again when the capture ends, and says the recording was started from another device. On a phone, Record (one tap) goes to an online standby computer with the same meeting open and not already capturing, otherwise to the phone itself; the button shows the computer's icon, the REC badge and recording controls show where it records, and choosing a source in Recording setup overrides it for that meeting. Phone decision: (a) the same on the phone; the switch itself is desktop only.
 Command {type:'start'|'stop'|'pause'|'resume'|'discard',meeting_id,recording_id,token?:string}; token is supplied for start/stop
 - GET /meetings/{id}/recording-state -> RecordingState
 RecordingState {status:'idle'|'starting'|'recording'|'switching'|'paused',active_device_id:string|null,pending_device_id:string|null,message:string|null,backup_order:string[],auto_fallback:boolean,user_paused?:boolean}
