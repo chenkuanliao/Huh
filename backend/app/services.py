@@ -79,7 +79,7 @@ def public(obj):
         Meeting: "id title notes notes_revision enhanced_notes enhanced_revision template_id language notes_language folder_id archived glossary created_at updated_at starts_at duration_minutes status",
         Folder: "id name color icon glossary created_at",
         Recording: "id meeting_id device_id label mime_type status created_at duration bytes chunk_count",
-        Device: "id name meeting_id ready backup_enabled last_seen recording_id",
+        Device: "id name meeting_id ready standby backup_enabled last_seen recording_id",
         Segment: "id recording_id start end text language",
         Template: "id name instructions structure is_default kind",
         Job: "id kind status progress error created_at",
@@ -381,7 +381,7 @@ def eligible(d, mid, backup=False):
     return (
         d
         and d.meeting_id == mid
-        and d.ready
+        and (d.ready or d.standby)
         and now() - d.last_seen < 12
         and (not backup or d.backup_enabled)
     )

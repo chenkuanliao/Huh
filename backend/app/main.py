@@ -747,6 +747,7 @@ def heartbeat(body: dict):
     mid = body.get("meeting_id")
     ready = boolean(body.get("ready"), "ready")
     backup = boolean(body.get("backup_enabled"), "backup_enabled")
+    standby = boolean(body.get("standby", False), "standby")
     with tx() as s:
         # The meeting (or the recording this device is capturing) may have been force-deleted.
         if mid and not s.get(Meeting, mid):
@@ -771,6 +772,7 @@ def heartbeat(body: dict):
         d.name = string(body.get("name"), "name", 200)
         d.meeting_id = mid
         d.ready = ready
+        d.standby = standby
         d.backup_enabled = backup
         d.last_seen = now()
         d.capture_state = string(body.get("capture_state", "idle"), "capture_state", 50)

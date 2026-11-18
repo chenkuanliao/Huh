@@ -106,6 +106,9 @@ class Device(Base):
     name: Mapped[str] = mapped_column(String)
     meeting_id: Mapped[str | None] = mapped_column(String, nullable=True)
     ready: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Mic is off but this page may open it when a start command arrives (a desktop with
+    # microphone permission already granted), so another device can start recording here.
+    standby: Mapped[bool] = mapped_column(Boolean, default=False)
     backup_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     last_seen: Mapped[float] = mapped_column(Float, default=now)
     recording_id: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -238,6 +241,8 @@ def init():
         if "duration_minutes" not in columns:
             c.execute(text("ALTER TABLE meetings ADD COLUMN duration_minutes INTEGER NOT NULL DEFAULT 60"))
         c.execute(text("UPDATE meetings SET starts_at = created_at WHERE starts_at IS NULL"))
+        if "standby" not in {col["name"] for col in inspect(c).get_columns("devices")}:
+            c.execute(text("ALTER TABLE devices ADD COLUMN standby BOOLEAN NOT NULL DEFAULT false"))
         if "output_language" not in {col["name"] for col in inspect(c).get_columns("generations")}:
             c.execute(text("ALTER TABLE generations ADD COLUMN output_language VARCHAR"))
         folder_columns = {col["name"] for col in inspect(c).get_columns("folders")}

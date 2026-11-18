@@ -8532,3 +8532,34 @@ body.phone .when-zone {
     justify-content: center;
   }
 }
+
+/* ----- phone Record: a laptop means it records with the open computer's mic */
+.phone-record-device {
+  position: relative;
+  display: inline-flex;
+  color: var(--ink);
+}
+.phone-record-device .rec-dot {
+  position: absolute;
+  right: -3px;
+  top: -2px;
+  width: 7px;
+  height: 7px;
+  box-shadow: 0 0 0 2px var(--surface-2);
+}
+.phone-rec-badge svg {
+  margin-left: 1px;
+}
+.rec-controls-where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.remote-start {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
